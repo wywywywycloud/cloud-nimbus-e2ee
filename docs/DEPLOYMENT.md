@@ -236,3 +236,18 @@ CI работает; автоматический CD отсутствует по
 Перед заменой проверены прежние SHA256 и release path, взят release lock; файлы заменены через временные файлы с сохранением прав. Исходные два файла и manifest сохранены в `/opt/nimbus/hotfix-backups/20260926T222643Z-external-passkey`. Для отката этого UI восстанавливаются только эти файлы; DB restore не требуется. Следующий полный релиз должен включать это исправление.
 
 Публичный HTTPS подтвердил новые байты и CSP/no-store/nosniff: `passkeys.js` — `f33872b77a2c1f7106a6a9c5b89872876eb04c5d7951f880bef9a74b6e849e51`, `index.html` — `707bbb763b9820feba02bd02cde0b36939d7f09c6ea4eb11070fe34f4835714b`. Web и Telegram services active; health/session 200, файлы без сессии 401, media 404. Локально прошли 147 Django tests, 26 клиентских tests, полный browser E2EE с внешним виртуальным USB-аутентификатором и проверки доставки/подмены. Обе темы и ширины 1280/390/320 проверены. Реальные QR/Bluetooth/телефон и provider sync не проверены.
+
+
+## Публикация Git 27 сентября после исправлений :9443
+
+Backend закрепляет клиент `113188a58d371d6f1e14e3bd950c68b8b34eb4b6`, включая
+parent RP, добровольный passkey skip, TOTP QR, manifest и independent verifier.
+[Свежие локальные результаты](../reports/publication-2026-09-27/README.md):
+147 backend, 34 Node, 38 verifier/vendor tests и 26 браузерных сценариев прошли.
+Workflow отдельного клиента активирован; автоматический deploy backend требует
+явного `NIMBUS_DEPLOY_ENABLED=true` (переменная сейчас отсутствует).
+Публикация Git не меняет работающий release. На момент независимой проверки сайт
+ещё выдавал прежние app.js/index.html/style.css и не отдавал QR-модули, поэтому
+проверка свежим Git manifest корректно вернула mismatch. Для синхронизации нужен
+отдельный согласованный релиз backend/client и миграция accounts.0008; подмена
+эталонного manifest скачанным с сайта недопустима.

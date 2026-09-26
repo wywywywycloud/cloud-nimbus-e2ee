@@ -1,0 +1,34 @@
+{
+  "checked_at_utc": "2026-09-26T23:23:02.419187+00:00",
+  "steps": [
+    {
+      "name": "django-check",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "name": "migration-drift",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "name": "django-tests",
+      "status": "passed",
+      "exit_code": 0,
+      "tests": 147
+    },
+    {
+      "name": "browser-crypto-auth-tests",
+      "status": "passed",
+      "exit_code": 0,
+      "tests": 34
+    },
+    {
+      "name": "verifier-vendor-tests",
+      "status": "passed",
+      "exit_code": 0,
+      "tests": 38
+    }
+  ],
+  "status": "passed"
+}

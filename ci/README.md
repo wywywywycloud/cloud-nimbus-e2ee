@@ -1,8 +1,9 @@
 # CI/CD integration
 
-`.github/workflows/checks.yml` is the proposed active workflow; `ci/github-actions.yml`
-is its identical reviewable copy. Neither has been pushed or run in GitHub by this task.
-Publishing requires a credential with permission to change workflows.
+`.github/workflows/checks.yml` defines the workflow; `ci/github-actions.yml` is its
+identical reviewable copy. The initial workflow has been published and run in GitHub.
+Deployment remains disabled until explicitly enabled by the repository variable below.
+Publishing workflow changes requires a credential with workflow permission.
 
 Both `verify` (backend, migration drift, client unit tests, browser and delivery/tamper
 checks) and `postgres` (full backend suite plus PostgreSQL row-lock/partial-index
@@ -16,8 +17,12 @@ receive upstream updates; dependencies use existing Python and pnpm locks. Servi
 image digest pinning can be added after selecting the registry mirror/platform.
 Artifacts contain JSON summaries only, no database, HAR, secrets or user files.
 
-Deployment runs on pushes to `main`, after both jobs, through the `production`
-environment. Configure protected `main`, required `verify`/`postgres` checks and
+Deployment runs only when the repository variable `NIMBUS_DEPLOY_ENABLED` is exactly
+`true`, on pushes to `main`, after both jobs, through the `production` environment.
+An absent or different value skips deployment while preserving all tests. Keep it
+unset until the host, secrets and TLS have been configured and verified; this change
+does not set the variable or give CI any server access.
+Configure protected `main`, required `verify`/`postgres` checks and
 production environment deployment branch restriction `main` before enabling it.
 Use required environment reviewers for the first deployment; changing that setting
 to unattended releases is a separate operator decision. Fork PRs have no deployment

@@ -1,0 +1,127 @@
+{
+  "checked": [
+    {
+      "expected_sha256": "52e7eb0b02f68303cf4e947e275bad4a4778419a63243e2b968fb7fde6de806d",
+      "http_status": 200,
+      "path": "index.html",
+      "sha256": "52e7eb0b02f68303cf4e947e275bad4a4778419a63243e2b968fb7fde6de806d",
+      "status": "match"
+    },
+    {
+      "expected_sha256": "531b3b63bde61edf6c46a92867a766812c50be5ec72482135d7929939d03df4d",
+      "http_status": 200,
+      "path": "style.css",
+      "sha256": "531b3b63bde61edf6c46a92867a766812c50be5ec72482135d7929939d03df4d",
+      "status": "match"
+    },
+    {
+      "expected_sha256": "938e86f3b78eb0df30bbc93add7035a66126708eb5fa062fffa4845b31de6707",
+      "http_status": 200,
+      "path": "app.js",
+      "sha256": "cad155f90ddde0e5dfb27737576c8e0515e7f6cbc700ae678d35a8b8f244b677",
+      "status": "mismatch"
+    },
+    {
+      "expected_sha256": "f5613ee8ab62f69c9a3717aadf3479aaed4ce93c25e082202234760a1af6be16",
+      "http_status": 200,
+      "path": "crypto.js",
+      "sha256": "f5613ee8ab62f69c9a3717aadf3479aaed4ce93c25e082202234760a1af6be16",
+      "status": "match"
+    },
+    {
+      "expected_sha256": "1b8389e4750e5cab4c9894c1fbdb24d811165ee58d9b6078c34d7b0e75f0f59d",
+      "http_status": 200,
+      "path": "account.js",
+      "sha256": "1b8389e4750e5cab4c9894c1fbdb24d811165ee58d9b6078c34d7b0e75f0f59d",
+      "status": "match"
+    },
+    {
+      "expected_sha256": "7f569713ec845fa96c87bd43d87fd3dc3042c7528ce9d1dabe288afbbe150a22",
+      "http_status": 200,
+      "path": "passkeys.js",
+      "sha256": "7f569713ec845fa96c87bd43d87fd3dc3042c7528ce9d1dabe288afbbe150a22",
+      "status": "match"
+    },
+    {
+      "expected_sha256": "bff4b30ba25964f0757f8c3b585425cd3efe7ebeec7ee54602277a15782d368a",
+      "http_status": 200,
+      "path": "totp-qr.js",
+      "sha256": "bff4b30ba25964f0757f8c3b585425cd3efe7ebeec7ee54602277a15782d368a",
+      "status": "match"
+    },
+    {
+      "expected_sha256": "1e8d56383a77948e453085b6d4f52dcb9645f8bfff32395738b63d3a2e2fcb52",
+      "http_status": 200,
+      "path": "vendor/opaque.js",
+      "sha256": "1e8d56383a77948e453085b6d4f52dcb9645f8bfff32395738b63d3a2e2fcb52",
+      "status": "match"
+    },
+    {
+      "expected_sha256": "409f8d923a38b8446dd079a53bb0d9cbcffaa51e0c7da4e0b530203b9ad17b2f",
+      "http_status": 200,
+      "path": "http.js",
+      "sha256": "409f8d923a38b8446dd079a53bb0d9cbcffaa51e0c7da4e0b530203b9ad17b2f",
+      "status": "match"
+    },
+    {
+      "expected_sha256": "ea91d7118a5395289170da848b7c6758b996163bfbccf312591ab65a4911b7c0",
+      "http_status": 200,
+      "path": "vendor/qrcode.js",
+      "sha256": "ea91d7118a5395289170da848b7c6758b996163bfbccf312591ab65a4911b7c0",
+      "status": "match"
+    }
+  ],
+  "format": "cloud-cypher-verification-report",
+  "issues": [
+    {
+      "code": "body_mismatch",
+      "path": "app.js",
+      "severity": "mismatch"
+    },
+    {
+      "code": "required_path_unobserved",
+      "path": "app.js",
+      "severity": "incomplete"
+    }
+  ],
+  "limitations": [
+    "A match establishes byte equality only within the stated observation scope.",
+    "It does not establish source safety, server behavior, equal delivery to others, or future delivery.",
+    "It does not block code execution or undo disclosure before verification.",
+    "A HAR is a supplied, editable capture, not an attestation from the browser.",
+    "Capture completeness, prior caches, generated code, workers and runtime execution are not proven.",
+    "Unencoded HAR text is reconstructed as UTF-8; base64 preserves exported binary bytes.",
+    "Unobserved optional manifest files were not verified in this capture."
+  ],
+  "observed_paths": [
+    "account.js",
+    "crypto.js",
+    "http.js",
+    "index.html",
+    "passkeys.js",
+    "style.css",
+    "totp-qr.js",
+    "vendor/opaque.js",
+    "vendor/qrcode.js"
+  ],
+  "required_paths": [
+    "account.js",
+    "app.js",
+    "crypto.js",
+    "http.js",
+    "index.html",
+    "passkeys.js",
+    "style.css",
+    "totp-qr.js",
+    "vendor/opaque.js",
+    "vendor/qrcode.js"
+  ],
+  "scope": "provided_har_response_bodies_and_declared_required_paths",
+  "security_header_policy_checked": true,
+  "status": "mismatch",
+  "unobserved_paths": [
+    "app.js",
+    "verify.html"
+  ],
+  "version": 1
+}

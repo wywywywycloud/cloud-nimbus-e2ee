@@ -81,7 +81,7 @@ jobs:
       - run: python manage.py test ci.test_postgresql --verbosity 2
   deploy:
     needs: [verify, postgres]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NIMBUS_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: production

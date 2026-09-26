@@ -21,7 +21,7 @@ def main():
         ('django-check', [sys.executable, 'manage.py', 'check'], ROOT),
         ('migration-drift', [sys.executable, 'manage.py', 'makemigrations', '--check', '--dry-run'], ROOT),
         ('django-tests', [sys.executable, 'manage.py', 'test', '--verbosity', '1'], ROOT),
-        ('browser-crypto-auth-tests', [node, '--test', 'tests/crypto.test.mjs', 'tests/auth.test.mjs'], ROOT / 'cloud-cypher'),
+        ('browser-crypto-auth-tests', [node, '--test', *[str(p.relative_to(ROOT / 'cloud-cypher')) for p in sorted((ROOT / 'cloud-cypher/tests').glob('*.test.mjs'))]], ROOT / 'cloud-cypher'),
         ('verifier-vendor-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_*.py'], ROOT / 'cloud-cypher'),
     ]
     results = []
