@@ -1,6 +1,6 @@
 # Контекст проекта cloud.nimbus
 
-Состояние на 27 сентября 2026 года: публичный экземпляр развёрнут вручную на https://nimbus.by:9443. Backend 05f3617 и клиент 4722feb прошли CI. Эксплуатационные проверки и ограничения — в [DEPLOYMENT.md](DEPLOYMENT.md). Репозитории: [backend cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee), [клиент cloud-cypher](https://github.com/wywywywycloud/cloud-cypher).
+Состояние на 27 сентября 2026 года: публичный экземпляр развёрнут вручную на https://cloud.nimbus.by. Backend 05f3617 и клиент 4722feb прошли CI. Эксплуатационные проверки и ограничения — в [DEPLOYMENT.md](DEPLOYMENT.md). Репозитории: [backend cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee), [клиент cloud-cypher](https://github.com/wywywywycloud/cloud-cypher).
 
 ## Что действует сейчас
 
