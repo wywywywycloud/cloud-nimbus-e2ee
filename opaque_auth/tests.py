@@ -41,7 +41,7 @@ process.stdout.write(JSON.stringify(result ?? null));
 
 def client_call(action, **params):
     result = subprocess.run(
-        [settings.OPAQUE_NODE, "--input-type=module", "-e", CLIENT_SCRIPT],
+        [shutil.which(settings.OPAQUE_NODE) or settings.OPAQUE_NODE, "--input-type=module", "-e", CLIENT_SCRIPT],
         input=json.dumps({"action": action, "params": params}).encode(),
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,

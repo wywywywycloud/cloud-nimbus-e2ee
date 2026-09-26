@@ -9,6 +9,7 @@
 - PostgreSQL 18 CI run 36272093384 обнаружил реальный отказ `FOR UPDATE cannot be applied to nullable side of outer join` в passkey login и legacy удалениях файла/папки; успешный SQLite-прогон этого не выявлял.
 - Исправление сохраняет блокировки конкретных записей без nullable `select_related`: user → vault → credential для passkey; user → файл/папка для удаления. Проверки owner и revoked vault сохраняются; отсутствующий vault отвергается.
 - Повторный PostgreSQL run 36272437660 больше не содержит nullable-join ошибок, но выявил независимое закрытие DB connection тестами: прямой `response.close()` вне Django streaming wrapper и повторное закрытие после потребления. Тесты теперь потребляют поток через wrapper, сохраняя проверки байтов/ownership; app connection lifecycle не меняется. Полный PostgreSQL CI должен пройти повторно; SQLite не считается его заменой.
+- Run 36272744161 подтвердил отсутствие обеих прежних ошибок, затем выявил test-helper `FileNotFoundError: node`: при минимальном subprocess environment Node из setup-node не находился. Helper теперь разрешает абсолютный путь до удаления окружения.
 
 ### AUTH-003 — Обязательный Telegram → passkey → TOTP, без email
 
