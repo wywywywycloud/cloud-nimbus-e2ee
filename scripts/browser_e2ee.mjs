@@ -27,7 +27,7 @@ page.setDefaultTimeout(15000);
 const cdp = await context.newCDPSession(page);
 await cdp.send('WebAuthn.enable');
 const {authenticatorId} = await cdp.send('WebAuthn.addVirtualAuthenticator', {options: {
-  protocol: 'ctap2', ctap2Version: 'ctap2_1', transport: 'internal', hasResidentKey: true,
+  protocol: 'ctap2', ctap2Version: 'ctap2_1', transport: 'usb', hasResidentKey: true,
   hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true,
   hasPrf: true, defaultBackupEligibility: true, defaultBackupState: true,
 }});
