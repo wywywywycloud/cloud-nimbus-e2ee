@@ -215,7 +215,7 @@ class FileFlowTests(TestCase):
         self.assertEqual(response.headers["Content-Type"], "image/png")
         self.assertIn("inline", response.headers["Content-Disposition"])
         self.assertEqual(response.headers["Cache-Control"], "private, no-store")
-        response.close()
+        self.assertEqual(b"".join(response.streaming_content), b"\x89PNG\r\n\x1a\npreview")
         self.assertEqual(self.client.get(reverse("drive:preview", args=[text.pk])).status_code, 404)
 
         self.client.force_login(self.other)

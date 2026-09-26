@@ -130,7 +130,6 @@ class VaultAPITests(TestCase):
         self.assertEqual(listing["files"], [descriptor])
         download = self.client.get(f"/api/cypher/files/{item.pk}/download/")
         self.assertEqual(b"".join(download.streaming_content), data)
-        download.close()
         self.assertIn("no-store", download["Cache-Control"])
         self.assertEqual(download["Content-Type"], "application/octet-stream")
         self.assertEqual(download["X-Content-Type-Options"], "nosniff")
