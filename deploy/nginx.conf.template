@@ -1,25 +1,20 @@
-# Replace DOMAIN with the configured DNS name. Never expose the blob directory.
-server {
-    listen 80;
-    listen [::]:80;
-    server_name DOMAIN;
-    access_log off;
-    location ^~ /.well-known/acme-challenge/ { root /var/lib/letsencrypt; }
-    location / { return 308 https://DOMAIN:9443$request_uri; }
-}
+# DOMAIN=cloud.nimbus.by, LEGACY_DOMAIN=nimbus.by. See docs/DEPLOYMENT.md.
+# Nginx owns only 9443. The certificate must cover both names.
 server {
     listen 9443 ssl;
     listen [::]:9443 ssl;
-    server_name DOMAIN;
+    server_name DOMAIN LEGACY_DOMAIN;
     ssl_certificate /etc/letsencrypt/live/DOMAIN/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/DOMAIN/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     server_tokens off;
-    # Capabilities can occur in paths; don't persist URLs in access/error logs.
     access_log off;
     error_log /var/log/nginx/nimbus-error.log crit;
     client_max_body_size 55m;
     client_body_timeout 120s;
+    if ($http_host != DOMAIN:9443) { return 308 https://DOMAIN:9443$request_uri; }
+    # Relative application redirects preserve the public :9443 origin.
+    absolute_redirect off;
     location ^~ /media/ { return 404; }
     location = / { return 302 /vault/; }
     location / {

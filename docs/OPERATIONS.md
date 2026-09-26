@@ -2,7 +2,7 @@
 
 ## Статус
 
-Публичный экземпляр работает на https://nimbus.by:9443 с 27 сентября 2026 года: Nginx, Gunicorn, PostgreSQL и приватное локальное хранилище. Развёрнут вручную без GitHub Actions SSH credentials; состояние и runbook — в [DEPLOYMENT.md](DEPLOYMENT.md). Новый клиент — `/vault/`, backend — Django. Go gateway не подключён. Telegram обязателен после OPAQUE-регистрации; затем предлагается passkey (можно пропустить с принятием риска) и настраивается обязательный TOTP. Passkey/PRF и разрушительный Telegram reset реализуются как рабочий прототип; реальная межустройственная синхронизация ещё не проверена. OPAQUE-вход дополнительно подтверждается обязательным TOTP. TOTP не является ключом файлов.
+Публичный экземпляр работает на https://cloud.nimbus.by:9443 с 27 сентября 2026 года: Nginx, Gunicorn, PostgreSQL и приватное локальное хранилище. Развёрнут вручную без GitHub Actions SSH credentials; состояние и runbook — в [DEPLOYMENT.md](DEPLOYMENT.md). Новый клиент — `/vault/`, backend — Django. Go gateway не подключён. Telegram обязателен после OPAQUE-регистрации; затем предлагается passkey (можно пропустить с принятием риска) и настраивается обязательный TOTP. Passkey/PRF и разрушительный Telegram reset реализуются как рабочий прототип; реальная межустройственная синхронизация ещё не проверена. OPAQUE-вход дополнительно подтверждается обязательным TOTP. TOTP не является ключом файлов.
 
 ## Зависимости и первый запуск
 
@@ -120,3 +120,7 @@ Bot API, одноразовые deep links, request_contact и сравнени�
 ## Добровольный пропуск passkey
 
 На шаге passkey пользователь может явно принять риск невосстановимой потери файлов при потере пароля. Согласие сохраняется на сервере; Telegram и TOTP остаются обязательными. При активном passkey согласие не обходит требования BE/BS. Разрушительный reset очищает согласие. Контракт и UI описаны в [AUTH_API.md](AUTH_API.md), решение — в [DECISIONS.md](DECISIONS.md). Изменение локальное; для deployment нужна миграция `accounts.0008_user_passkey_risk_accepted_at` и обновлённый клиент.
+
+## 2026-09-27: публичный поддомен на 9443
+
+Для нового публичного адреса задаются DJANGO_ALLOWED_HOSTS=cloud.nimbus.by и PASSKEY_ORIGIN=https://cloud.nimbus.by:9443. PASSKEY_RP_ID=nimbus.by и существующие секреты сохраняются. DNS, сертификат обоих имён, Nginx и обратимый переход описаны в [DEPLOYMENT.md](DEPLOYMENT.md).

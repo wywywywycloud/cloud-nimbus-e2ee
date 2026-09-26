@@ -1,6 +1,6 @@
 # Контекст проекта cloud.nimbus
 
-Состояние на 27 сентября 2026 года: публичный экземпляр развёрнут вручную на https://nimbus.by:9443. Backend 05f3617 и клиент 4722feb прошли CI. Эксплуатационные проверки и ограничения — в [DEPLOYMENT.md](DEPLOYMENT.md). Репозитории: [backend cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee), [клиент cloud-cypher](https://github.com/wywywywycloud/cloud-cypher).
+Состояние на 27 сентября 2026 года: публичный экземпляр развёрнут вручную на https://cloud.nimbus.by:9443. Backend 05f3617 и клиент 4722feb прошли CI. Эксплуатационные проверки и ограничения — в [DEPLOYMENT.md](DEPLOYMENT.md). Репозитории: [backend cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee), [клиент cloud-cypher](https://github.com/wywywywycloud/cloud-cypher).
 
 ## Что действует сейчас
 
@@ -59,3 +59,7 @@ TOTP обязателен при последующих парольных вх�
 ## Добровольный пропуск passkey
 
 На шаге passkey пользователь может явно принять риск невосстановимой потери файлов при потере пароля. Согласие сохраняется на сервере; Telegram и TOTP остаются обязательными. При активном passkey согласие не обходит требования BE/BS. Разрушительный reset очищает согласие. Контракт и UI описаны в [AUTH_API.md](AUTH_API.md), решение — в [DECISIONS.md](DECISIONS.md). Изменение локальное; для deployment нужна миграция `accounts.0008_user_passkey_risk_accepted_at` и обновлённый клиент.
+
+## 2026-09-27: публичный поддомен на 9443
+
+Целевой публичный адрес: https://cloud.nimbus.by:9443/; Nginx слушает только :9443 и передаёт запросы Gunicorn на 127.0.0.1:8000. Состояние переключения и runbook — [DEPLOYMENT.md](DEPLOYMENT.md).

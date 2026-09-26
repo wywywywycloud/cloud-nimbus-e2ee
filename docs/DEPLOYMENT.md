@@ -1,4 +1,94 @@
-# Cloud Nimbus: развёртывание и эксплуатация
+# Cloud Nimbus: HTTPS только на 9443
+
+Текущий публичный адрес — [https://cloud.nimbus.by:9443/vault/](https://cloud.nimbus.by:9443/vault/).
+По требованию владельца 27 сентября 2026 года схема с внешним :443 отменена.
+Nginx слушает **только :9443**, IPv4 и IPv6, напрямую проксирует на Gunicorn
+127.0.0.1:8000. Nginx не открывает :80 или :443, включая редиректы.
+Старый `https://nimbus.by:9443` перенаправляется на новый домен **с :9443**,
+сохраняя path/query. Корень возвращает относительный `/vault/`.
+
+## Применённый серверный hotfix
+
+Сервер 13.143.141.139, release symlink по-прежнему указывает на
+05f361793f546e580c2e9de0696761a446f226b8 с последующими точечными исправлениями.
+Из активной конфигурации Nginx удалены listener :80/:443 и промежуточный TLS proxy.
+PASSKEY_ORIGIN изменён на `https://cloud.nimbus.by:9443`;
+DJANGO_ALLOWED_HOSTS=cloud.nimbus.by, **PASSKEY_RP_ID=nimbus.by сохранён**.
+OPAQUE setup, Django secret, БД, vault и пользовательские credentials не менялись.
+После `nginx -t` выполнены reload Nginx и restart web; health на :9443 вернул 200.
+`ss` подтвердил только :9443 у Nginx. На освобождённом :443 был обнаружен
+отдельный процесс **rw-core**; его служба не изменялась.
+
+Root-only backup предыдущего nginx/runtime.env:
+`/opt/nimbus/hotfix-backups/20260926T230242Z-9443-only`.
+В нём есть секреты; не копировать в Git. Возвращать старый конфиг целиком нельзя:
+он снова займёт :443. При восстановлении сохранять правило единственного :9443.
+DB restore или смена ключей для этой правки не нужны.
+
+## DNS, TLS и продление сертификата
+
+A cloud.nimbus.by → 13.143.141.139 (TTL 3600); apex A и NS не изменены.
+Сертификат `/etc/letsencrypt/live/cloud.nimbus.by` покрывает cloud.nimbus.by и
+nimbus.by, действителен до **25 декабря 2026 года**.
+Certbot timer включён, но сохранённый HTTP-01/webroot способ продления больше
+неработоспособен без :80. До истечения нужен DNS-01 или внешний обработчик
+ACME challenge; такая автоматизация пока не настроена. Нельзя возвращать
+listener :80/:443 или standalone certbot ради renewal без нового решения владельца.
+
+## Повторное применение конфигурации
+
+1. Подставить LEGACY_DOMAIN=nimbus.by, затем DOMAIN=cloud.nimbus.by в единственном
+   `deploy/nginx.conf.template`. Сохранить текущие секреты и backup вне Git.
+2. Заменить активный Nimbus config; удалить прежние Nimbus blocks на :80/:443,
+   в том числе старый nginx-443-redirect. Проверить весь `nginx -T`, не только шаблон.
+3. Установить PASSKEY_ORIGIN=https://cloud.nimbus.by:9443 и
+   DJANGO_ALLOWED_HOSTS=cloud.nimbus.by. Сохранить PASSKEY_RP_ID=nimbus.by.
+4. Проверить `nginx -t`, reload Nginx, restart web. Production settings требуют
+   HTTPS :9443 и RP, равный hostname либо его родительскому DNS-домену.
+5. Проверить владельцев listener через `ss`, HTTPS health/root/vault/media,
+   редирект apex с портом, точный origin/CSRF. Другие службы на :443 не останавливать.
+
+До выдачи страницы Nginx проверяет полный входящий Host, включая :9443.
+Если другая служба пересылает TLS с :443 на :9443, Host без порта также получает
+редирект на канонический origin: иначе форма открывается, а CSRF отклоняет POST.
+
+Proxy фиксирует Host=cloud.nimbus.by:9443 и HTTPS scheme, перезаписывает forwarded
+headers без доверия входящему X-Real-IP. Gunicorn остаётся на loopback.
+Release controller берёт health Host из PASSKEY_ORIGIN, включая порт.
+Реальный вход/passkey на новом origin требует отдельной пользовательской проверки;
+тестовый аутентификатор не подтверждает физическую синхронизацию provider.
+
+## Проверки конфигурации
+
+`ci/test_nginx.py` запускает настоящий Nginx из шаблона на изолированном высоком
+порту с временным TLS: проверяет единственный listener, прямой proxy, точный Host,
+редирект apex с :9443, private media и замену поддельных forwarded headers.
+`ci/check_deployment.py` проверяет origin :9443, parent RP, отказ :443/без порта
+и неверных origin/host/RP. `ci/test_release.py` проверяет health Host с :9443.
+Все четыре Nginx теста (изолированно под nimbus-build), четыре release теста
+и production guards прошли после изменения.
+
+### Клиентский RP после переключения
+
+Дополнительно исправлена проверка RP в passkeys.js: точный hostname или родительский
+RP по границе DNS-label. Без этого прежний клиент отклонял nimbus.by на cloud.nimbus.by.
+Сервер по-прежнему проверяет точный origin, браузер — ограничения WebAuthn/public suffix.
+Постоянный PRF input, derivation и существующие конверты не меняются.
+[Client PR](https://github.com/wywywywycloud/cloud-cypher/pull/1), pinned commit
+78fb206. Live изменены только passkeys.js и его запись manifest; SHA256
+7f569713ec845fa96c87bd43d87fd3dc3042c7528ce9d1dabe288afbbe150a22. Backup:
+`/opt/nimbus/hotfix-backups/20260926T225802Z-parent-rp`. 34 Node tests и 38 verifier
+ tests прошли, включая parent RP для регистрации/входа и отказ чужим RP.
+Реальный passkey провайдера не проверялся; это исправление сохраняет прежний RP,
+а не переносит credentials на новый RP.
+
+
+---
+
+Следующие разделы — история; их старые port/origin настройки заменены инструкцией выше.
+
+## История развёртывания до переключения домена
+
 
 На 27 сентября 2026 года публичный экземпляр работает на
 [https://nimbus.by:9443/vault/](https://nimbus.by:9443/vault/).
@@ -146,3 +236,18 @@ CI работает; автоматический CD отсутствует по
 Перед заменой проверены прежние SHA256 и release path, взят release lock; файлы заменены через временные файлы с сохранением прав. Исходные два файла и manifest сохранены в `/opt/nimbus/hotfix-backups/20260926T222643Z-external-passkey`. Для отката этого UI восстанавливаются только эти файлы; DB restore не требуется. Следующий полный релиз должен включать это исправление.
 
 Публичный HTTPS подтвердил новые байты и CSP/no-store/nosniff: `passkeys.js` — `f33872b77a2c1f7106a6a9c5b89872876eb04c5d7951f880bef9a74b6e849e51`, `index.html` — `707bbb763b9820feba02bd02cde0b36939d7f09c6ea4eb11070fe34f4835714b`. Web и Telegram services active; health/session 200, файлы без сессии 401, media 404. Локально прошли 147 Django tests, 26 клиентских tests, полный browser E2EE с внешним виртуальным USB-аутентификатором и проверки доставки/подмены. Обе темы и ширины 1280/390/320 проверены. Реальные QR/Bluetooth/телефон и provider sync не проверены.
+
+
+## Публикация Git 27 сентября после исправлений :9443
+
+Backend закрепляет клиент `113188a58d371d6f1e14e3bd950c68b8b34eb4b6`, включая
+parent RP, добровольный passkey skip, TOTP QR, manifest и independent verifier.
+[Свежие локальные результаты](../reports/publication-2026-09-27/README.md):
+147 backend, 34 Node, 38 verifier/vendor tests и 26 браузерных сценариев прошли.
+Workflow отдельного клиента активирован; автоматический deploy backend требует
+явного `NIMBUS_DEPLOY_ENABLED=true` (переменная сейчас отсутствует).
+Публикация Git не меняет работающий release. На момент независимой проверки сайт
+ещё выдавал прежние app.js/index.html/style.css и не отдавал QR-модули, поэтому
+проверка свежим Git manifest корректно вернула mismatch. Для синхронизации нужен
+отдельный согласованный релиз backend/client и миграция accounts.0008; подмена
+эталонного manifest скачанным с сайта недопустима.

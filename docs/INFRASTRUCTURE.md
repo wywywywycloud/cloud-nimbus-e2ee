@@ -2,7 +2,7 @@
 
 ## Статус и граница проектов
 
-E2EE MVP развёрнут вручную на https://nimbus.by:9443 27 сентября 2026 года. Это публичный прототип, а не подтверждение независимого security review или физической синхронизации passkey. См. [DEPLOYMENT.md](DEPLOYMENT.md). [cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee) содержит Django backend под LGPL-3.0-or-later. [cloud-cypher](https://github.com/wywywywycloud/cloud-cypher) — отдельный клиент под Apache-2.0; vendored OPAQUE сохраняет свою MIT-лицензию. Старый Telegram/plaintext MVP остаётся историей и совместимостью, а не текущим описанием нового файлового потока.
+E2EE MVP развёрнут вручную на https://cloud.nimbus.by:9443 27 сентября 2026 года. Это публичный прототип, а не подтверждение независимого security review или физической синхронизации passkey. См. [DEPLOYMENT.md](DEPLOYMENT.md). [cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee) содержит Django backend под LGPL-3.0-or-later. [cloud-cypher](https://github.com/wywywywycloud/cloud-cypher) — отдельный клиент под Apache-2.0; vendored OPAQUE сохраняет свою MIT-лицензию. Старый Telegram/plaintext MVP остаётся историей и совместимостью, а не текущим описанием нового файлового потока.
 
 ```text
 Браузер: cloud-cypher
@@ -100,3 +100,7 @@ Production требует PostgreSQL, TLS, точного passkey origin/RP ID �
 Это выбор браузерного сценария, а не новое криптографическое доказательство физического устройства. Hints зависят от поддержки браузером; внешний аутентификатор всё ещё должен поддерживать PRF и подписанные BE=1/BS=1. Обычный device-bound USB-ключ не становится подходящим из-за внешнего подключения. PRF остаётся на клиенте; серверные проверки не ослаблены. Проверка виртуального внешнего аутентификатора не подтверждает реальный телефон, QR/Bluetooth или provider sync.
 
 Основание: [WebAuthn Level 3, hints](https://www.w3.org/TR/webauthn-3/#enum-hints).
+
+## 2026-09-27: публичный поддомен без порта
+
+Публичный origin — cloud.nimbus.by:9443. Nginx слушает только :9443 (IPv4/IPv6) и напрямую проксирует на Gunicorn 127.0.0.1:8000. Передаётся канонический Host с :9443, HTTPS scheme; forwarded headers перезаписываются. Nginx не занимает :80/:443. RP остаётся nimbus.by для действующих passkey; origin/CSRF — строго https://cloud.nimbus.by:9443. См. [DEPLOYMENT.md](DEPLOYMENT.md).

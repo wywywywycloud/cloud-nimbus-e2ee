@@ -56,7 +56,7 @@ rm /etc/nimbus/maintenance
 systemctl start nimbus.service
 healthy=0
 for attempt in {1..30}; do
-    if curl --silent --fail --max-time 3 -H "Host: $PASSKEY_RP_ID:9443" -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/healthz/ >/dev/null; then healthy=1; break; fi
+    if curl --silent --fail --max-time 3 -H "Host: ${PASSKEY_ORIGIN#https://}" -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/healthz/ >/dev/null; then healthy=1; break; fi
     sleep 1
 done
 if [[ "$healthy" != 1 ]]; then false; fi
