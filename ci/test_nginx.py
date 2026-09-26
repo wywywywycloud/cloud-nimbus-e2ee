@@ -51,17 +51,23 @@ class ProxyTests(unittest.TestCase):
                 '-addext', 'keyUsage=critical,keyCertSign,cRLSign')
         openssl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'intermediate.key',
                 '-out', 'intermediate.csr', '-subj', '/CN=Nimbus disposable intermediate')
-        (cls.root/'intermediate.ext').write_text('basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n')
+        (cls.root/'intermediate.ext').write_text('basicConstraints=critical,CA:TRUE,pathlen:1\nkeyUsage=critical,keyCertSign,cRLSign\n')
         openssl('x509', '-req', '-in', 'intermediate.csr', '-CA', 'root.pem', '-CAkey',
                 'root.key', '-CAcreateserial', '-out', 'intermediate.pem', '-days', '1',
                 '-extfile', 'intermediate.ext')
+        openssl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'issuer.key',
+                '-out', 'issuer.csr', '-subj', '/CN=Nimbus disposable issuer')
+        (cls.root/'issuer.ext').write_text('basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n')
+        openssl('x509', '-req', '-in', 'issuer.csr', '-CA', 'intermediate.pem', '-CAkey',
+                'intermediate.key', '-CAcreateserial', '-out', 'issuer.pem', '-days', '1',
+                '-extfile', 'issuer.ext')
         openssl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'key.pem',
                 '-out', 'server.csr', '-subj', '/CN=cloud.nimbus.test')
         (cls.root/'server.ext').write_text('basicConstraints=critical,CA:FALSE\nsubjectAltName=DNS:cloud.nimbus.test,DNS:nimbus.test\n')
-        openssl('x509', '-req', '-in', 'server.csr', '-CA', 'intermediate.pem', '-CAkey',
-                'intermediate.key', '-CAcreateserial', '-out', 'leaf.pem', '-days', '1',
+        openssl('x509', '-req', '-in', 'server.csr', '-CA', 'issuer.pem', '-CAkey',
+                'issuer.key', '-CAcreateserial', '-out', 'leaf.pem', '-days', '1',
                 '-extfile', 'server.ext')
-        (cls.root/'cert.pem').write_bytes((cls.root/'leaf.pem').read_bytes() + (cls.root/'intermediate.pem').read_bytes())
+        (cls.root/'cert.pem').write_bytes((cls.root/'leaf.pem').read_bytes() + (cls.root/'issuer.pem').read_bytes() + (cls.root/'intermediate.pem').read_bytes())
         template = '\n'.join((ROOT/'deploy'/name).read_text() for name in
                              ('nginx.conf.template', 'nginx-443-redirect.conf.template'))
         # Remove IPv6 listeners only for this portable isolated test.
