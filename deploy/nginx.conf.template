@@ -12,7 +12,7 @@ server {
     error_log /var/log/nginx/nimbus-error.log crit;
     client_max_body_size 55m;
     client_body_timeout 120s;
-    if ($host != DOMAIN) { return 308 https://DOMAIN:9443$request_uri; }
+    if ($http_host != DOMAIN:9443) { return 308 https://DOMAIN:9443$request_uri; }
     # Relative application redirects preserve the public :9443 origin.
     absolute_redirect off;
     location ^~ /media/ { return 404; }

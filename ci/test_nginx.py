@@ -133,10 +133,14 @@ class ProxyTests(unittest.TestCase):
             with self.subTest(port=port), self.assertRaises(OSError):
                 socket.create_connection(('127.0.0.1', port), timeout=.2)
 
-    def test_legacy_redirect_preserves_port_and_uri(self):
-        status, headers, _ = self.request(self.backend, 'nimbus.test:9443', '/vault/?next=a%2Fb')
-        self.assertEqual(status, 308)
-        self.assertEqual(headers['Location'], 'https://cloud.nimbus.test:9443/vault/?next=a%2Fb')
+    def test_noncanonical_authority_redirect_preserves_port_and_uri(self):
+        # A TLS forwarding service can reach 9443 with a browser Host lacking
+        # the port. Redirect GETs before serving a form on the wrong CSRF origin.
+        for host in ('nimbus.test:9443', 'cloud.nimbus.test', 'cloud.nimbus.test:443'):
+            with self.subTest(host=host):
+                status, headers, _ = self.request(self.backend, host, '/vault/?next=a%2Fb')
+                self.assertEqual(status, 308)
+                self.assertEqual(headers['Location'], 'https://cloud.nimbus.test:9443/vault/?next=a%2Fb')
 
     def test_direct_proxy_preserves_origin_and_replaces_untrusted_headers(self):
         status, _, body = self.request(self.backend, 'cloud.nimbus.test:9443', '/api/cypher/session/',

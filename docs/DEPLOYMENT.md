@@ -48,6 +48,10 @@ listener :80/:443 или standalone certbot ради renewal без нового
 5. Проверить владельцев listener через `ss`, HTTPS health/root/vault/media,
    редирект apex с портом, точный origin/CSRF. Другие службы на :443 не останавливать.
 
+До выдачи страницы Nginx проверяет полный входящий Host, включая :9443.
+Если другая служба пересылает TLS с :443 на :9443, Host без порта также получает
+редирект на канонический origin: иначе форма открывается, а CSRF отклоняет POST.
+
 Proxy фиксирует Host=cloud.nimbus.by:9443 и HTTPS scheme, перезаписывает forwarded
 headers без доверия входящему X-Real-IP. Gunicorn остаётся на loopback.
 Release controller берёт health Host из PASSKEY_ORIGIN, включая порт.
