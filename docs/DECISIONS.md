@@ -327,3 +327,5 @@
 ## 2026-09-27: публичный поддомен без порта
 
 Браузер использует https://cloud.nimbus.by без :9443. Nginx :443 проксирует запросы по HTTPS к 127.0.0.1:9443 с SNI и проверкой сертификата, далее к существующему Gunicorn. Прежние HTTP/HTTPS адреса redirect на новый origin; backend root redirect относительный, порт не раскрывается в Location. Для сохранения существующих passkey RP остаётся nimbus.by, а точный проверяемый origin и CSRF переходят на https://cloud.nimbus.by. Origin :9443 разрешён конфигурационным валидатором для обратимости, но одновременно старый origin не принимается. Сессии нового host требуют повторного входа. Секреты OPAQUE, vault и данные не меняются. DNS/TLS и фактические проверки — в DEPLOYMENT.md. Основание: [Nginx proxy module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) и [WebAuthn RP ID](https://www.w3.org/TR/webauthn-3/#rp-id).
+
+Клиентская проверка также разрешает родительский RP по границе DNS-label; иначе смена hostname блокировала прежние passkey до вызова WebAuthn. Постоянный PRF input и ключи сохранены; live patch и Client PR указаны в DEPLOYMENT.md.

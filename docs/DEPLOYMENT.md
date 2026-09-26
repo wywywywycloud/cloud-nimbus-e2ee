@@ -16,7 +16,7 @@ cloud.nimbus.by и nimbus.by, действует до 25 декабря 2026 г�
 внесённое исправление прав staticfiles сохранено. Web, Nginx и polling работают.
 
 Это точечный hotfix поверх release 05f361793f546e580c2e9de0696761a446f226b8,
-без полного релиза, DB migrations, смены ключей и клиентских файлов. Backup исходных
+без полного релиза, DB migrations и смены ключей. Backup исходных
 настроек: `/opt/nimbus/hotfix-backups/20260926T224856Z-cloud-domain` (root-only,
 содержит runtime secrets, не копировать в Git). Первое переключение было возвращено
 автоматически после неуспешного health; после настройки глубины проверки upstream
@@ -34,6 +34,20 @@ production guards; исходный браузерный E2EE до rebase про
 реальный Nginx проверен на сервере под nimbus-build. Локальный DNS/браузер ещё может
 кешировать прежний NXDOMAIN; публичные DNS уже возвращают новый A. Реальный passkey
 провайдера после смены origin и вход в пользовательский аккаунт не выполнялись.
+
+### Клиентский RP после переключения
+
+Дополнительно исправлена проверка RP в passkeys.js: точный hostname или родительский
+RP по границе DNS-label. Без этого прежний клиент отклонял nimbus.by на cloud.nimbus.by.
+Сервер по-прежнему проверяет точный origin, браузер — ограничения WebAuthn/public suffix.
+Постоянный PRF input, derivation и существующие конверты не меняются.
+[Client PR](https://github.com/wywywywycloud/cloud-cypher/pull/1), pinned commit
+78fb206. Live изменены только passkeys.js и его запись manifest; SHA256
+7f569713ec845fa96c87bd43d87fd3dc3042c7528ce9d1dabe288afbbe150a22. Backup:
+`/opt/nimbus/hotfix-backups/20260926T225802Z-parent-rp`. 34 Node tests и 38 verifier
+ tests прошли, включая parent RP для регистрации/входа и отказ чужим RP.
+Реальный passkey провайдера не проверялся; это исправление сохраняет прежний RP,
+а не переносит credentials на новый RP.
 
 ## Настройки и безопасное переключение
 
