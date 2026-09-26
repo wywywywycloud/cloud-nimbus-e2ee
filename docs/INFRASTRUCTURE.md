@@ -2,7 +2,7 @@
 
 ## Статус и граница проектов
 
-E2EE MVP развёрнут вручную на https://cloud.nimbus.by 27 сентября 2026 года. Это публичный прототип, а не подтверждение независимого security review или физической синхронизации passkey. См. [DEPLOYMENT.md](DEPLOYMENT.md). [cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee) содержит Django backend под LGPL-3.0-or-later. [cloud-cypher](https://github.com/wywywywycloud/cloud-cypher) — отдельный клиент под Apache-2.0; vendored OPAQUE сохраняет свою MIT-лицензию. Старый Telegram/plaintext MVP остаётся историей и совместимостью, а не текущим описанием нового файлового потока.
+E2EE MVP развёрнут вручную на https://cloud.nimbus.by:9443 27 сентября 2026 года. Это публичный прототип, а не подтверждение независимого security review или физической синхронизации passkey. См. [DEPLOYMENT.md](DEPLOYMENT.md). [cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee) содержит Django backend под LGPL-3.0-or-later. [cloud-cypher](https://github.com/wywywywycloud/cloud-cypher) — отдельный клиент под Apache-2.0; vendored OPAQUE сохраняет свою MIT-лицензию. Старый Telegram/plaintext MVP остаётся историей и совместимостью, а не текущим описанием нового файлового потока.
 
 ```text
 Браузер: cloud-cypher
@@ -103,4 +103,4 @@ Production требует PostgreSQL, TLS, точного passkey origin/RP ID �
 
 ## 2026-09-27: публичный поддомен без порта
 
-Публичный origin cloud.nimbus.by:443 отделён от HTTPS backend IP:9443. Nginx передаёт канонический Host без порта, HTTPS scheme и перезаписывает forwarded headers; upstream TLS проверяется. RP остаётся nimbus.by для действующих passkey; origin/CSRF — строго https://cloud.nimbus.by. См. [DEPLOYMENT.md](DEPLOYMENT.md).
+Публичный origin — cloud.nimbus.by:9443. Nginx слушает только :9443 (IPv4/IPv6) и напрямую проксирует на Gunicorn 127.0.0.1:8000. Передаётся канонический Host с :9443, HTTPS scheme; forwarded headers перезаписываются. Nginx не занимает :80/:443. RP остаётся nimbus.by для действующих passkey; origin/CSRF — строго https://cloud.nimbus.by:9443. См. [DEPLOYMENT.md](DEPLOYMENT.md).

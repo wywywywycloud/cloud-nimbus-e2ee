@@ -329,3 +329,18 @@
 Браузер использует https://cloud.nimbus.by без :9443. Nginx :443 проксирует запросы по HTTPS к 127.0.0.1:9443 с SNI и проверкой сертификата, далее к существующему Gunicorn. Прежние HTTP/HTTPS адреса redirect на новый origin; backend root redirect относительный, порт не раскрывается в Location. Для сохранения существующих passkey RP остаётся nimbus.by, а точный проверяемый origin и CSRF переходят на https://cloud.nimbus.by. Origin :9443 разрешён конфигурационным валидатором для обратимости, но одновременно старый origin не принимается. Сессии нового host требуют повторного входа. Секреты OPAQUE, vault и данные не меняются. DNS/TLS и фактические проверки — в DEPLOYMENT.md. Основание: [Nginx proxy module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) и [WebAuthn RP ID](https://www.w3.org/TR/webauthn-3/#rp-id).
 
 Клиентская проверка также разрешает родительский RP по границе DNS-label; иначе смена hostname блокировала прежние passkey до вызова WebAuthn. Постоянный PRF input и ключи сохранены; live patch и Client PR указаны в DEPLOYMENT.md.
+
+
+## 2026-09-27 — Nginx только на 9443 (заменяет схему proxy :443)
+
+По прямому требованию владельца Nginx освобождает :443 и :80. Единственный HTTPS
+listener — :9443, напрямую передающий запросы на Gunicorn 127.0.0.1:8000.
+Публичный origin и CSRF — https://cloud.nimbus.by:9443; старый apex на :9443
+перенаправляется туда с сохранением пути и query. RP остаётся nimbus.by, существующие
+credentials/ключи/данные сохраняются. Production guard требует точный порт 9443.
+Отдельный шаблон listener :443 удалён. На сервере :443 после освобождения занимал
+другой процесс rw-core; эта задача не меняет чужую службу.
+Старый HTTP-01 webroot renewal без :80 не работает: перед истечением сертификата
+25 декабря 2026 года нужен DNS-01 или внешний обработчик challenge. Открывать
+:80/:443 для продления вопреки этому решению нельзя. Сначала применён серверный
+hotfix с backup, затем обновлены Git, runbook и regression tests.

@@ -40,7 +40,7 @@ def main():
         production = dict(env, DJANGO_SETTINGS_MODULE="config.production", DJANGO_DEBUG="0",
                           DJANGO_SECRET_KEY=os.urandom(32).hex(), DJANGO_ALLOWED_HOSTS="cloud.nimbus.by",
                           DJANGO_UPLOAD_TEMP_DIR=str(work),
-                          POSTGRES_DB="nimbus_ci", PASSKEY_RP_ID="nimbus.by", PASSKEY_ORIGIN="https://cloud.nimbus.by",
+                          POSTGRES_DB="nimbus_ci", PASSKEY_RP_ID="nimbus.by", PASSKEY_ORIGIN="https://cloud.nimbus.by:9443",
                           TELEGRAM_ENABLED="1", TELEGRAM_BOT_TOKEN="synthetic-test-only",
                           TELEGRAM_BOT_USERNAME="synthetic_test_bot", PASSKEY_REQUIRED="1",
                           LOGIN_SECOND_FACTOR_REQUIRED="1", NIMBUS_LEGACY_WRITES_ENABLED="0", OPAQUE_ENABLED="1")
@@ -48,20 +48,21 @@ def main():
         run(command, production)
         # A parent RP preserves existing credentials when moving to a subdomain.
         for changes in ({"PASSKEY_RP_ID": "cloud.nimbus.by"},
-                        {"PASSKEY_ORIGIN": "https://cloud.nimbus.by:443"},
                         {"PASSKEY_ORIGIN": "https://nimbus.by:9443", "DJANGO_ALLOWED_HOSTS": "nimbus.by"}):
             run(command, dict(production, **changes))
         for changes in ({"DJANGO_DEBUG": "1"}, {"POSTGRES_DB": ""}, {"TELEGRAM_ENABLED": "0"},
-                        {"TELEGRAM_BOT_TOKEN": ""}, {"PASSKEY_ORIGIN": "http://cloud.nimbus.by"},
+                        {"TELEGRAM_BOT_TOKEN": ""}, {"PASSKEY_ORIGIN": "http://cloud.nimbus.by:9443"},
                         {"PASSKEY_ORIGIN": "https://cloud.nimbus.by:8000"},
-                        {"PASSKEY_ORIGIN": "https://cloud.nimbus.by/"},
-                        {"PASSKEY_ORIGIN": "https://cloud.nimbus.by?query=1"},
-                        {"PASSKEY_ORIGIN": "https://cloud.nimbus.by#fragment"},
-                        {"PASSKEY_ORIGIN": "https://user:password@cloud.nimbus.by"},
+                        {"PASSKEY_ORIGIN": "https://cloud.nimbus.by:443"},
+                        {"PASSKEY_ORIGIN": "https://cloud.nimbus.by"},
+                        {"PASSKEY_ORIGIN": "https://cloud.nimbus.by:9443/"},
+                        {"PASSKEY_ORIGIN": "https://cloud.nimbus.by:9443?query=1"},
+                        {"PASSKEY_ORIGIN": "https://cloud.nimbus.by:9443#fragment"},
+                        {"PASSKEY_ORIGIN": "https://user:password@cloud.nimbus.by:9443"},
                         {"PASSKEY_RP_ID": "other.nimbus.by"},
                         {"PASSKEY_RP_ID": "imbus.by"},
-                        {"PASSKEY_ORIGIN": "https://evilnimbus.by", "DJANGO_ALLOWED_HOSTS": "evilnimbus.by"},
-                        {"PASSKEY_ORIGIN": "https://nimbus.by.evil.test", "DJANGO_ALLOWED_HOSTS": "nimbus.by.evil.test"},
+                        {"PASSKEY_ORIGIN": "https://evilnimbus.by:9443", "DJANGO_ALLOWED_HOSTS": "evilnimbus.by"},
+                        {"PASSKEY_ORIGIN": "https://nimbus.by.evil.test:9443", "DJANGO_ALLOWED_HOSTS": "nimbus.by.evil.test"},
                         {"DJANGO_ALLOWED_HOSTS": "nimbus.by"},
                         {"PASSKEY_REQUIRED": "0"}, {"LOGIN_SECOND_FACTOR_REQUIRED": "0"},
                         {"NIMBUS_LEGACY_WRITES_ENABLED": "1"}, {"OPAQUE_SERVER_SETUP": ""}):

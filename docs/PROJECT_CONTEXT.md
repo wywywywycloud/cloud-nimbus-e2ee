@@ -1,6 +1,6 @@
 # Контекст проекта cloud.nimbus
 
-Состояние на 27 сентября 2026 года: публичный экземпляр развёрнут вручную на https://cloud.nimbus.by. Backend 05f3617 и клиент 4722feb прошли CI. Эксплуатационные проверки и ограничения — в [DEPLOYMENT.md](DEPLOYMENT.md). Репозитории: [backend cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee), [клиент cloud-cypher](https://github.com/wywywywycloud/cloud-cypher).
+Состояние на 27 сентября 2026 года: публичный экземпляр развёрнут вручную на https://cloud.nimbus.by:9443. Backend 05f3617 и клиент 4722feb прошли CI. Эксплуатационные проверки и ограничения — в [DEPLOYMENT.md](DEPLOYMENT.md). Репозитории: [backend cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee), [клиент cloud-cypher](https://github.com/wywywywycloud/cloud-cypher).
 
 ## Что действует сейчас
 
@@ -62,4 +62,4 @@ TOTP обязателен при последующих парольных вх�
 
 ## 2026-09-27: публичный поддомен без порта
 
-Целевой публичный адрес: https://cloud.nimbus.by/; TLS proxy на :443 передаёт запросы backend на IP:9443. Состояние переключения и runbook — [DEPLOYMENT.md](DEPLOYMENT.md).
+Целевой публичный адрес: https://cloud.nimbus.by:9443/; Nginx слушает только :9443 и передаёт запросы Gunicorn на 127.0.0.1:8000. Состояние переключения и runbook — [DEPLOYMENT.md](DEPLOYMENT.md).

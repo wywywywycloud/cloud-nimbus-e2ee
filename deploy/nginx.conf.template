@@ -1,48 +1,5 @@
 # DOMAIN=cloud.nimbus.by, LEGACY_DOMAIN=nimbus.by. See docs/DEPLOYMENT.md.
-# The certificate named DOMAIN must cover BOTH names for old :9443 links.
-server {
-    listen 80;
-    listen [::]:80;
-    server_name DOMAIN LEGACY_DOMAIN;
-    access_log off;
-    error_log /var/log/nginx/nimbus-error.log crit;
-    location ^~ /.well-known/acme-challenge/ { root /var/lib/letsencrypt; }
-    location / { return 308 https://DOMAIN$request_uri; }
-}
-# Public origin: proxy requests instead of redirecting the browser to :9443.
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    server_name DOMAIN;
-    ssl_certificate /etc/letsencrypt/live/DOMAIN/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/DOMAIN/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    server_tokens off;
-    access_log off;
-    error_log /var/log/nginx/nimbus-error.log crit;
-    client_max_body_size 55m;
-    client_body_timeout 120s;
-    location ^~ /media/ { return 404; }
-    location / {
-        proxy_pass https://127.0.0.1:9443;
-        proxy_ssl_server_name on;
-        proxy_ssl_name DOMAIN;
-        proxy_ssl_verify on;
-        proxy_ssl_verify_depth 2;
-        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
-        proxy_set_header Host DOMAIN;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header Connection "";
-        proxy_http_version 1.1;
-        proxy_read_timeout 130s;
-        proxy_send_timeout 130s;
-        proxy_buffering off;
-    }
-}
-# Application transport remains HTTPS on IP:9443. Browser URLs with a port
-# (including cached redirects from the old site) go to the canonical origin.
+# Nginx owns only 9443. The certificate must cover both names.
 server {
     listen 9443 ssl;
     listen [::]:9443 ssl;
@@ -55,17 +12,14 @@ server {
     error_log /var/log/nginx/nimbus-error.log crit;
     client_max_body_size 55m;
     client_body_timeout 120s;
-    # Only the local front proxy may supply the original client address.
-    set_real_ip_from 127.0.0.1;
-    real_ip_header X-Real-IP;
-    if ($http_host != DOMAIN) { return 308 https://DOMAIN$request_uri; }
-    # Keep redirects relative, so this transport's :9443 never leaks in Location.
+    if ($host != DOMAIN) { return 308 https://DOMAIN:9443$request_uri; }
+    # Relative application redirects preserve the public :9443 origin.
     absolute_redirect off;
     location ^~ /media/ { return 404; }
     location = / { return 302 /vault/; }
     location / {
         proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host DOMAIN;
+        proxy_set_header Host DOMAIN:9443;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Real-IP $remote_addr;
