@@ -53,7 +53,7 @@ class ReleaseFailures(unittest.TestCase):
         root = Path(temporary.name)
         for path in ('bin', 'opt/nimbus/releases', 'etc/nimbus', 'run/lock'):
             (root / path).mkdir(parents=True)
-        (root / 'etc/nimbus/runtime.env').write_text('PASSKEY_RP_ID=nimbus.by\n')
+        (root / 'etc/nimbus/runtime.env').write_text('PASSKEY_RP_ID=nimbus.by\nPASSKEY_ORIGIN=https://cloud.nimbus.by\n')
         # A stale old controller link must never be followed or overwritten.
         (root / 'opt/nimbus/.next').symlink_to('/nonexistent-old-release')
         release = root / 'opt/nimbus/releases' / SHA
@@ -109,6 +109,8 @@ class ReleaseFailures(unittest.TestCase):
         # with directory traversal, and without group write or public access.
         self.assertEqual(stat.S_IMODE(static_dir.stat().st_mode), 0o750)
         self.assertEqual(stat.S_IMODE((static_dir / 'asset.css').stat().st_mode), 0o640)
+        health = next(e for e in events if e[0] == 'curl')
+        self.assertIn('Host: cloud.nimbus.by', health)
         stop = next(i for i, e in enumerate(events) if e[:2] == ['systemctl', 'stop'])
         self.assertIn('nimbus-telegram.service', events[stop])
         self.assertIn('nimbus-maintenance.service', events[stop])

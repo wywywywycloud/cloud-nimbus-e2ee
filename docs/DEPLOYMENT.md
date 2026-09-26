@@ -1,4 +1,63 @@
-# Cloud Nimbus: развёртывание и эксплуатация
+# Cloud Nimbus: переключение публичного адреса
+
+Целевой адрес — `https://cloud.nimbus.by/` (стандартный HTTPS :443).
+Физический маршрут на одном сервере: Nginx :443 → HTTPS 127.0.0.1:9443 →
+Gunicorn 127.0.0.1:8000. Открытие `/` приводит к `/vault/` без порта.
+Старые nimbus.by:443/:9443 и HTTP ссылки перенаправляются на cloud.nimbus.by
+с сохранением пути/query. Приложение, данные и E2EE не переносятся на другой сервер.
+
+## Настройки и безопасное переключение
+
+1. Добавить только A `cloud.nimbus.by → 13.143.141.139` в существующей зоне,
+   сохранить apex A и NS. Проверить authoritative DNS; не создавать AAAA без рабочего IPv6.
+2. Сохранить старые Nginx configs и runtime.env вне Git, с правами root-only.
+   Выпустить сертификат с SAN **cloud.nimbus.by и nimbus.by** под именем
+   `cloud.nimbus.by` через существующий ACME webroot `/var/lib/letsencrypt`.
+   До переключения проверить доступность HTTP challenge для нового host.
+3. Установить проверенный `config/production.py`, который поддерживает origin без
+   порта и родительский RP. Задать только `DJANGO_ALLOWED_HOSTS=cloud.nimbus.by`,
+   `PASSKEY_ORIGIN=https://cloud.nimbus.by`; **сохранить PASSKEY_RP_ID=nimbus.by**,
+   OPAQUE setup, Django secret, DB, ciphertext и остальные runtime параметры.
+   Прежний origin :9443 остаётся допустимым в коде для обратимого перехода.
+4. Заменить оба Nginx шаблона с `LEGACY_DOMAIN=nimbus.by`, затем
+   `DOMAIN=cloud.nimbus.by` (важен порядок замен). Они устанавливаются вместе;
+   прежний redirect cloud/:443 → :9443 должен быть удалён из активной конфигурации.
+   TLS :443 проксирует на :9443 с SNI и **проверкой upstream сертификата**.
+   Backend получает канонический Host без порта и HTTPS scheme; внешний клиент
+   не может подменить forwarded IP. Только loopback proxy доверен для real IP.
+5. Под release lock выполнить production check, `nginx -t`, перезапустить web
+   с новым environment и reload Nginx. Polling остаётся polling; webhook не менять.
+   Обновить установленный release controller из PR: health Host берётся из origin,
+   а не из RP, который теперь отличается от hostname приложения.
+6. Проверить TLS без insecure-флагов, обе старые точки входа, новый `/vault/`,
+   `/healthz/`, `/api/cypher/session/`, unauthenticated files=401, media=404,
+   CSRF=403 для старого/чужого origin и CSRF с новым origin. Сверить manifest
+   существующего клиента. Проверить вход и passkey на реальном устройстве отдельно.
+
+Сессия и localStorage старого origin не переносятся браузером: нужен повторный вход.
+RP `nimbus.by` остаётся валидным родительским доменом для `cloud.nimbus.by`, поэтому
+сохранённые credentials и PRF-конверты не переписываются. Проверка WebAuthn origin
+остаётся точной, без wildcard или одновременного принятия старого origin.
+Другие поддомены nimbus.by должны оставаться под доверенным управлением владельца RP.
+Не менять RP на cloud.nimbus.by у действующих credentials и не сбрасывать vault.
+
+При ошибке вернуть сохранённые Nginx configs, public origin/allowed hosts и
+предыдущий production.py, проверить `nginx -t` и перезапустить web/reload.
+DB restore, смена setup, удаление файлов и миграции для этого переключения не нужны.
+Кешированный 308 на старый :9443 учтён ответным редиректом на новый домен.
+
+## Проверки PR
+
+`ci/test_nginx.py` запускает реальные шаблоны Nginx на временных высоких портах
+с одноразовым сертификатом и echo backend: проверяет два proxy hop, TLS trust,
+редиректы без порта, сохранение URI, private media и перезапись forwarded headers.
+`ci/check_deployment.py` проверяет новый/прежний origin, parent RP и отказ неверных
+origin/host/RP. `ci/test_release.py` проверяет Host health запроса.
+
+---
+
+## История развёртывания до переключения домена
+
 
 На 27 сентября 2026 года публичный экземпляр работает на
 [https://nimbus.by:9443/vault/](https://nimbus.by:9443/vault/).

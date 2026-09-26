@@ -11,10 +11,10 @@ if DEBUG or DATABASES["default"]["ENGINE"] != "django.db.backends.postgresql":
 if not OPAQUE_SERVER_SETUP or len(SECRET_KEY) < 50:
     raise ImproperlyConfigured("Production requires persistent OPAQUE setup and Django secret")
 origin = urlsplit(PASSKEY_ORIGIN)
-if (origin.scheme != "https" or origin.hostname != PASSKEY_RP_ID
-        or origin.port != 9443 or origin.path or origin.query or origin.fragment
-        or origin.username or origin.password or PASSKEY_RP_ID not in ALLOWED_HOSTS):
-    raise ImproperlyConfigured("Set matching HTTPS :9443 origin, DNS RP ID and allowed host")
+if (origin.scheme != "https" or not (origin.hostname == PASSKEY_RP_ID or (origin.hostname or "").endswith("." + PASSKEY_RP_ID))
+        or origin.port not in (None, 443, 9443) or origin.path or origin.query or origin.fragment
+        or origin.username or origin.password or origin.hostname not in ALLOWED_HOSTS):
+    raise ImproperlyConfigured("Set an HTTPS origin on port 443 or 9443, its allowed host and matching DNS RP ID (or parent domain)")
 try:
     ipaddress.ip_address(PASSKEY_RP_ID)
 except ValueError:

@@ -1,13 +1,14 @@
-# OPTIONAL separate listener: install only after confirming port 443 is free.
+# Legacy apex only. DOMAIN=cloud.nimbus.by, LEGACY_DOMAIN=nimbus.by.
+# Replace the old :443 -> :9443 listener with this, alongside nginx.conf.template.
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
-    server_name DOMAIN;
+    server_name LEGACY_DOMAIN;
     ssl_certificate /etc/letsencrypt/live/DOMAIN/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/DOMAIN/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     server_tokens off;
     access_log off;
     error_log /var/log/nginx/nimbus-error.log crit;
-    return 308 https://DOMAIN:9443$request_uri;
+    return 308 https://DOMAIN$request_uri;
 }

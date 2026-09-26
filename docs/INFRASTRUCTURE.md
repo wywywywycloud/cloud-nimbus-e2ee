@@ -100,3 +100,7 @@ Production требует PostgreSQL, TLS, точного passkey origin/RP ID �
 Это выбор браузерного сценария, а не новое криптографическое доказательство физического устройства. Hints зависят от поддержки браузером; внешний аутентификатор всё ещё должен поддерживать PRF и подписанные BE=1/BS=1. Обычный device-bound USB-ключ не становится подходящим из-за внешнего подключения. PRF остаётся на клиенте; серверные проверки не ослаблены. Проверка виртуального внешнего аутентификатора не подтверждает реальный телефон, QR/Bluetooth или provider sync.
 
 Основание: [WebAuthn Level 3, hints](https://www.w3.org/TR/webauthn-3/#enum-hints).
+
+## 2026-09-27: публичный поддомен без порта
+
+Публичный origin cloud.nimbus.by:443 отделён от HTTPS backend IP:9443. Nginx передаёт канонический Host без порта, HTTPS scheme и перезаписывает forwarded headers; upstream TLS проверяется. RP остаётся nimbus.by для действующих passkey; origin/CSRF — строго https://cloud.nimbus.by. См. [DEPLOYMENT.md](DEPLOYMENT.md).
