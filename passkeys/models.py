@@ -47,6 +47,7 @@ class PasskeyReset(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True)
     session_digest = models.CharField(max_length=64)
+    telegram_user_id = models.PositiveBigIntegerField(null=True)
     code_digest = models.CharField(max_length=64)
     auth_hash = models.CharField(max_length=64, blank=True)
     attempts = models.PositiveSmallIntegerField(default=0)

@@ -1,0 +1,26 @@
+#!/bin/bash
+# Invoked only while application and maintenance writers are stopped, under release lock.
+set -euo pipefail
+umask 077
+if systemctl is-active --quiet nimbus.service || systemctl is-active --quiet nimbus-maintenance.service || systemctl is-active --quiet nimbus-telegram.service; then
+    echo 'Refusing inconsistent backup: application writers are active' >&2
+    exit 1
+fi
+backup_dir=/var/backups/nimbus
+install -d -m 700 "$backup_dir"
+available=$(df --output=avail -B1 "$backup_dir" | tail -1)
+needed=$(du -sb /var/lib/nimbus /var/lib/postgresql | awk '{sum += $1} END {print sum}')
+(( available > needed + 2147483648 )) || { echo 'Insufficient free space for backup plus 2 GiB reserve' >&2; exit 1; }
+backup_stage=$(mktemp -d "$backup_dir/.partial.XXXXXXXX")
+trap 'rm -rf -- "$backup_stage"' EXIT
+runuser -u postgres -- pg_dump -Fc nimbus > "$backup_stage/database.dump"
+tar -C /var/lib/nimbus -cf "$backup_stage/ciphertext.tar" media
+tar -C /etc/nimbus -cf "$backup_stage/secrets.tar" runtime.env
+readlink -f /opt/nimbus/current > "$backup_stage/release.txt" || true
+(cd "$backup_stage" && sha256sum database.dump ciphertext.tar secrets.tar release.txt > SHA256SUMS)
+backup_name=$(date -u +%Y%m%dT%H%M%SZ)-$$
+mv "$backup_stage" "$backup_dir/$backup_name"
+trap - EXIT
+# Keep three completed snapshots. Never remove partial/unrecognized directories.
+find "$backup_dir" -mindepth 1 -maxdepth 1 -type d -name '20*T*Z-*' | sort -r | tail -n +4 | while IFS= read -r old_backup; do rm -rf -- "$old_backup"; done
+echo "Consistent local backup: $backup_name"

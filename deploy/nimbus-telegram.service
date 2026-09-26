@@ -1,0 +1,28 @@
+[Unit]
+Description=Nimbus Telegram onboarding polling (HTTPS 9443 cannot receive Bot API webhooks)
+After=network-online.target postgresql.service nimbus.service
+Wants=network-online.target
+Requires=postgresql.service
+ConditionPathExists=/etc/nimbus/runtime.env
+
+ConditionPathExists=!/etc/nimbus/maintenance
+
+[Service]
+User=nimbus
+Group=nimbus
+WorkingDirectory=/opt/nimbus/current
+EnvironmentFile=/etc/nimbus/runtime.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/nimbus/current/.venv/bin/python manage.py run_telegram_bot
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nimbus
+MemoryMax=120M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Consistent local backup of Nimbus database, ciphertext and server secrets
+ConditionPathExists=/opt/nimbus/current
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nimbus-backup
+UMask=0077

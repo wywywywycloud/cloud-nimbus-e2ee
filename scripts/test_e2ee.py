@@ -33,8 +33,6 @@ def main():
         work = Path(temporary)
         client = work / "client"
         shutil.copytree(ROOT / "cloud-cypher" / "web", client)
-        mail = work / "mail"
-        mail.mkdir()
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -42,8 +40,8 @@ def main():
         env = dict(os.environ, DJANGO_SETTINGS_MODULE="config.integration_stand",
                    DJANGO_DATABASE_PATH=str(work / "db.sqlite3"), DJANGO_MEDIA_ROOT=str(work / "media"),
                    CYPHER_CLIENT_ROOT=str(client), DJANGO_SECRET_KEY=os.urandom(32).hex(),
-                   DJANGO_DEBUG="1", TELEGRAM_ENABLED="0", NIMBUS_LEGACY_WRITES_ENABLED="0",
-                   NIMBUS_TEST_EMAIL_DIR=str(mail), OPAQUE_NODE=node,
+                   DJANGO_DEBUG="1", TELEGRAM_ENABLED="1", TELEGRAM_BOT_TOKEN="synthetic-test-token", TELEGRAM_BOT_USERNAME="nimbus_synthetic_bot", NIMBUS_LEGACY_WRITES_ENABLED="0",
+                   OPAQUE_NODE=node,
                    PASSKEY_RP_ID="localhost", PASSKEY_ORIGIN=base,
                    PASSKEY_REQUIRED="1", LOGIN_SECOND_FACTOR_REQUIRED="1", NIMBUS_TEST_BASE_URL=base,
                    NIMBUS_TEST_PYTHON=sys.executable,
@@ -52,7 +50,7 @@ def main():
         env["OPAQUE_SERVER_SETUP"] = json.loads(setup.stdout)["result"]["serverSetup"]
         run([sys.executable, "manage.py", "migrate", "--noinput", "--verbosity", "0"], env)
         with (work / "server.log").open("w") as log:
-            server = subprocess.Popen([sys.executable, "manage.py", "runserver", f"127.0.0.1:{port}", "--noreload"],
+            server = subprocess.Popen([sys.executable, "scripts/test_telegram.py", "serve", f"127.0.0.1:{port}"],
                                       cwd=ROOT, env=env, stdout=log, stderr=log)
             try:
                 for _ in range(100):

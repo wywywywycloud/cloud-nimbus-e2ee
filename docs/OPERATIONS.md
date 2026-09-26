@@ -2,7 +2,7 @@
 
 ## Статус
 
-Рабочий контур локальный; публичный production не развёрнут. Новый клиент — `/vault/`, backend — Django. Go gateway не подключён. Telegram выключен по умолчанию. Passkey/PRF и разрушительный email reset реализуются как рабочий прототип; реальная межустройственная синхронизация ещё не проверена. OPAQUE-вход дополнительно подтверждается email-кодом либо подключённым TOTP. TOTP не является ключом файлов.
+Рабочий контур локальный; публичный production не развёрнут. Новый клиент — `/vault/`, backend — Django. Go gateway не подключён. Telegram обязателен после OPAQUE-регистрации; затем настраиваются passkey и TOTP. Passkey/PRF и разрушительный Telegram reset реализуются как рабочий прототип; реальная межустройственная синхронизация ещё не проверена. OPAQUE-вход дополнительно подтверждается обязательным TOTP. TOTP не является ключом файлов.
 
 ## Зависимости и первый запуск
 
@@ -37,7 +37,7 @@ export OPAQUE_MODULE_PATH="$PWD/cloud-cypher/web/vendor/opaque.js"
 
 Открыть `http://localhost:8017/vault/`. `localhost` выбран согласованно с локальными `PASSKEY_RP_ID` и `PASSKEY_ORIGIN`; замена на `127.0.0.1` или другой порт требует явной настройки origin/RP. WebCrypto и WebAuthn требуют secure context; localhost разрешён для разработки, production требует HTTPS.
 
-Без `EMAIL_HOST` письма выводятся console email backend. Не размещать такие журналы в общедоступном месте. Для проверки поведения настоящих email-сценариев нужен SMTP либо изолированный тестовый mail backend.
+Email auth/verification/recovery отключены. Telegram bot token и username задаются вне репозитория. Без доступного бота onboarding закрыт. Для тестов используется mock отправки сообщений. См. [AUTH_API.md](AUTH_API.md).
 
 ## Конфигурация
 
@@ -49,16 +49,16 @@ export OPAQUE_MODULE_PATH="$PWD/cloud-cypher/web/vendor/opaque.js"
 | `OPAQUE_MODULE_PATH` | Путь к зафиксированному vendored ESM OPAQUE; default путь относительно bridge |
 | `CYPHER_CLIENT_ROOT` | Каталог статического клиента, default `cloud-cypher/web` |
 | `NIMBUS_LEGACY_WRITES_ENABLED` | `0`; не включать plaintext fallback для E2EE |
-| `TELEGRAM_ENABLED` | `0`; Telegram сейчас не обязательный контур |
-| `PASSKEY_REQUIRED` | `1`; upload требует активного passkey-конверта текущего vault с подписанными `BE=1`, `BS=1` |
-| `LOGIN_SECOND_FACTOR_REQUIRED` | `1`; OPAQUE proof дополняется email/TOTP challenge до выдачи Django session |
+| `TELEGRAM_ENABLED` | `1` для работы бота; выключение не отключает обязательный onboarding gate |
+| `PASSKEY_REQUIRED` | Устаревший флаг не отключает проверку; upload всегда требует Telegram, TOTP и активный passkey-конверт текущего vault с подписанными `BE=1`, `BS=1` |
+| `LOGIN_SECOND_FACTOR_REQUIRED` | Устаревший флаг не отключает проверку; после onboarding OPAQUE всегда требует TOTP |
 | `PASSKEY_RP_ID` | Локально `localhost`; production требует явного значения |
 | `PASSKEY_ORIGIN` | Локально `http://localhost:8017`; точное совпадение origin |
 | `DJANGO_SECRET_KEY` | Обязательный уникальный секрет вне DEBUG |
 | `DJANGO_DATABASE_PATH` | Путь локальной SQLite БД; production требует PostgreSQL |
 | `DJANGO_MEDIA_ROOT` | Приватный каталог blobs; default `media/` |
 | `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS` | Development/host policy |
-| `EMAIL_*` | SMTP; без `EMAIL_HOST` используется console backend |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` | Секрет бота и имя; только приватная конфигурация |
 
 Настройки через environment не загружаются из произвольного `.env` автоматически. Node bridge получает только необходимые переменные; ни server setup, ни пароль не должны попадать в аргументы процесса, access logs, отчёты или Git. Django exception filter скрывает OPAQUE setup и отмеченные секретные переменные также при DEBUG; это не делает development server подходящим для публичной эксплуатации. `.env.telegram`, БД, media, виртуальные окружения, private setup files и generated reports с секретами не являются исходниками.
 
@@ -81,7 +81,7 @@ export OPAQUE_MODULE_PATH="$PWD/cloud-cypher/web/vendor/opaque.js"
 | --- | --- |
 | `cleanup_cipher_blobs` | Повторяет удаление ciphertext, собирает брошенные staging blobs; запуск каждые 5–15 минут |
 | `cleanup_opaque_challenges` | Удаляет использованное и просроченное серверное OPAQUE state |
-| `cleanup_otp_challenges` | Удаляет использованные и просроченные email/TOTP challenges и незавершённые TOTP enrollment secrets |
+| `cleanup_otp_challenges` | Удаляет использованные и просроченные TOTP challenges и незавершённые TOTP enrollment secrets |
 | `cleanup_rate_buckets` | Удаляет устаревшие rate-limit buckets |
 | `purge_deleted_accounts` | Физическое удаление аккаунтов после существующего 30-дневного периода; ciphertext cleanup через outbox |
 | `cleanup_uploads` | Только оставшиеся legacy resumable sessions |
@@ -107,12 +107,12 @@ Legacy `readyz`/ClamAV проверки относятся к старому к�
 
 Restore проверяется в изолированном окружении: целостность ciphertext, metadata, counters, доступ своего/чужого пользователя, отозванные поколения и очередь удалений. Tombstones и сведения об отзыве должны переживать восстановление старой копии; иначе старый vault может ошибочно снова стать доступным для выдачи. Исторические plaintext backups сохраняют исторический риск утечки.
 
-Сохранившийся passkey позволяет сменить забытый пароль с сохранением файлов. Потеря всех passkey и пароля не устраняется одним email/TOTP-кодом: разрушительный email reset удаляет все CipherFile и конверты шифрованного хранилища, после чего создаётся новый пустой vault. Legacy plaintext не входит в этот endpoint; новые plaintext-записи выключены. Не описывать этот сброс как восстановление прежних файлов.
+Сохранившийся passkey позволяет сменить забытый пароль с сохранением файлов. Потеря всех passkey и пароля не устраняется одним Telegram/TOTP-кодом: разрушительный Telegram reset удаляет все CipherFile и конверты шифрованного хранилища, после чего создаётся новый пустой vault. Legacy plaintext не входит в этот endpoint; новые plaintext-записи выключены. Не описывать этот сброс как восстановление прежних файлов.
 
 ## Перед production
 
-Проверить recovery-модель на реальных аутентификаторах; провести security review приложения и независимой поставки клиента; перейти на PostgreSQL; настроить TLS, SMTP, proxy limits, private storage, monitoring, scheduler и backup/restore. Проверить реальные браузеры и аутентификаторы, для passkey/PRF-прототипа. Go gateway не объявлять активным без полноценного adapter и тестов. Запуск development server и успешные локальные тесты не являются production-развёртыванием.
+Проверить recovery-модель на реальных аутентификаторах; провести security review приложения и независимой поставки клиента; перейти на PostgreSQL; настроить TLS, Telegram polling/webhook, proxy limits, private storage, monitoring, scheduler и backup/restore. Проверить реальные браузеры и аутентификаторы, для passkey/PRF-прототипа. Go gateway не объявлять активным без полноценного adapter и тестов. Запуск development server и успешные локальные тесты не являются production-развёртыванием.
 
-## Исторический Telegram-контур
+## Telegram-контур
 
-Bot API, одноразовые deep links, `request_contact`, polling/webhook и проверка своего contact ID сохранены в legacy-коде. Они не генерируют секретные ключи и не запускаются для текущего E2EE по умолчанию. Старый runbook «Telegram обязателен для upload» больше не определяет поведение нового контура.
+Bot API, одноразовые deep links, request_contact и сравнение своего contact ID используются в текущем onboarding. TG ID не создаёт секретный ключ. На HTTPS :9443 используется отдельный polling service, поскольку Telegram webhook этот порт не поддерживает. Подробности локально подготовленного deployment: [DEPLOYMENT.md](DEPLOYMENT.md). Реальное production-развёртывание отдельно от локальных проверок.

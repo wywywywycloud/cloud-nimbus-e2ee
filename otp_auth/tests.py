@@ -17,6 +17,9 @@ from opaque_auth.models import OpaqueCredential
 from opaque_auth.protocol import call_opaque
 from opaque_auth.tests import NODE_FALLBACK, client_call, identifiers
 
+from accounts.test_support import factors, onboarding_session
+from vaults.models import Vault
+
 from .models import OtpChallenge, TotpCredential
 
 
@@ -44,12 +47,15 @@ class OtpAuthTests(TestCase):
         registration = call_opaque("createRegistrationResponse", userIdentifier="alice", registrationRequest=start["registrationRequest"])
         result = client_call("finishRegistration", password=self.password, clientRegistrationState=start["clientRegistrationState"], registrationResponse=registration["registrationResponse"], identifiers=identifiers("alice"), keyStretching="memory-constrained")
         self.credential = OpaqueCredential.objects.create(user=self.user, registration_record=result["registrationRecord"])
+        factors(self.user, vault=Vault.objects.create(owner=self.user, wrapped_key={}))
+        TotpCredential.objects.filter(user=self.user).delete()
 
     def post(self, path, payload, client=None):
         return (client or self.client).post(f"/api/otp/{path}/", payload, content_type="application/json")
 
     def begin_login(self, client=None):
         client = client or self.client
+        TotpCredential.objects.get_or_create(user=self.user, defaults={"secret": pyotp.random_base32()})
         start = client_call("startLogin", password=self.password)
         response = client.post("/api/opaque/login/start/", {"username": "alice", "startLoginRequest": start["startLoginRequest"]}, content_type="application/json")
         self.assertEqual(response.status_code, 200, response.content)
@@ -66,10 +72,11 @@ class OtpAuthTests(TestCase):
         return self.post("login/finish", {"challenge": challenge, "code": code}, client)
 
     def email_code(self):
-        return re.search(r"Код входа: ([0-9]{6})", mail.outbox[-1].body).group(1)
+        return pyotp.TOTP(TotpCredential.objects.get(user=self.user).secret).at(self.now)
 
     def recent_login(self):
         self.client.force_login(self.user)
+        onboarding_session(self.client, self.user)
         session = self.client.session
         session["opaque_recent_auth"] = {"user_id": self.user.pk, "credential_version": self.credential.version, "authenticated_at": timezone.now().timestamp()}
         session.save()
@@ -80,14 +87,14 @@ class OtpAuthTests(TestCase):
         self.assertEqual(start.status_code, 200, start.content)
         payload = start.json()
         self.assertIn("otpauth://totp/", payload["otpauth_uri"])
-        self.assertIn(self.user.email.replace("@", "%40"), payload["otpauth_uri"])
+        self.assertIn(self.user.username, payload["otpauth_uri"])
         response = self.post("setup/finish", {"challenge": payload["challenge"], "code": pyotp.TOTP(payload["secret"]).at(self.now)})
         self.assertEqual(response.status_code, 200, response.content)
         return payload["secret"]
 
-    def test_opaque_proof_does_not_authenticate_until_email_code(self):
+    def test_opaque_proof_does_not_authenticate_until_totp(self):
         challenge = self.begin_login()
-        self.assertEqual(challenge["method"], "email")
+        self.assertEqual(challenge["method"], "totp")
         self.assertNotIn("_auth_user_id", self.client.session)
         self.assertFalse(self.client.get("/api/cypher/session/").json()["authenticated"])
         response = self.finish_login(challenge["challenge"], self.email_code())
@@ -100,7 +107,7 @@ class OtpAuthTests(TestCase):
         self.assertIsNotNone(stored.consumed_at)
         self.assertIn("no-store", response["Cache-Control"])
 
-    def test_email_wrong_attempts_replay_and_session_binding(self):
+    def test_totp_wrong_attempts_replay_and_session_binding(self):
         challenge = self.begin_login()["challenge"]
         code = self.email_code()
         self.assertEqual(self.finish_login(challenge, code, Client()).status_code, 401)
@@ -110,12 +117,13 @@ class OtpAuthTests(TestCase):
         self.assertEqual(self.finish_login(challenge, code).status_code, 401)
         self.assertEqual(OtpChallenge.objects.get(pk=challenge).payload, {})
         self.assertNotIn("_auth_user_id", self.client.session)
+        self.now += timedelta(seconds=30)
         challenge = self.begin_login()["challenge"]
         code = self.email_code()
         self.assertEqual(self.finish_login(challenge, code).status_code, 200)
         self.assertEqual(self.finish_login(challenge, code).status_code, 401)
 
-    def test_expired_and_replaced_credentials_invalidate_email_proof(self):
+    def test_expired_and_replaced_credentials_invalidate_totp_proof(self):
         challenge = self.begin_login()["challenge"]
         code = self.email_code()
         self.now += timedelta(minutes=6)
@@ -125,7 +133,7 @@ class OtpAuthTests(TestCase):
         OpaqueCredential.objects.filter(pk=self.credential.pk).update(version=2)
         self.assertEqual(self.finish_login(challenge, code).status_code, 401)
 
-    def test_session_hash_rotation_invalidates_inflight_email_proof(self):
+    def test_session_hash_rotation_invalidates_inflight_totp_proof(self):
         challenge = self.begin_login()["challenge"]
         code = self.email_code()
         self.user.set_unusable_password()
@@ -172,10 +180,11 @@ class OtpAuthTests(TestCase):
         self.now += timedelta(seconds=30)
         self.assertEqual(self.finish_login(challenge["challenge"], pyotp.TOTP(secret).at(self.now)).status_code, 401)
 
-    def test_enrollment_invalidates_preexisting_email_challenge(self):
+    def test_enrollment_invalidates_preexisting_login_challenge(self):
         old_client = Client()
         old_challenge = self.begin_login(old_client)
         old_code = self.email_code()
+        TotpCredential.objects.filter(user=self.user).delete()
         self.enroll()
         self.assertEqual(self.finish_login(old_challenge["challenge"], old_code, old_client).status_code, 401)
 
@@ -190,15 +199,18 @@ class OtpAuthTests(TestCase):
         self.assertEqual(self.post("setup/start", {}, csrf_client).status_code, 403)
         self.assertEqual(self.post("login/finish", {"challenge": second["challenge"], "code": "000000"}, csrf_client).status_code, 403)
 
-    def test_email_failure_never_authenticates_or_leaves_live_secret(self):
-        start = client_call("startLogin", password=self.password)
-        response = self.client.post("/api/opaque/login/start/", {"username": "alice", "startLoginRequest": start["startLoginRequest"]}, content_type="application/json")
-        result = client_call("finishLogin", password=self.password, clientLoginState=start["clientLoginState"], loginResponse=response.json()["loginResponse"], identifiers=identifiers("alice"), keyStretching="memory-constrained")
-        with patch("otp_auth.services.send_mail", side_effect=RuntimeError("offline")):
-            finish = self.client.post("/api/opaque/login/finish/", {"challenge": response.json()["challenge"], "finishLoginRequest": result["finishLoginRequest"]}, content_type="application/json")
-        self.assertEqual(finish.status_code, 503)
-        self.assertNotIn("_auth_user_id", self.client.session)
-        self.assertFalse(OtpChallenge.objects.filter(consumed_at__isnull=True).exists())
+    def test_legacy_email_challenge_is_rejected_without_sending_email(self):
+        from .services import session_digest, code_digest
+        import uuid
+        identifier = uuid.uuid4()
+        session = self.client.session
+        session['otp_exchange_nonce'] = 'test-binding'
+        session.save()
+        import hashlib
+        OtpChallenge.objects.create(id=identifier, user=self.user, kind='login', method='email', session_digest=hashlib.sha256(b'test-binding').hexdigest(), payload={'credential_id': self.credential.pk, 'credential_version': 1, 'auth_hash': self.user.get_session_auth_hash(), 'code_digest': code_digest(identifier, '123456')}, expires_at=self.now + timedelta(minutes=5))
+        self.assertEqual(self.finish_login(str(identifier), '123456').status_code, 401)
+        self.assertNotIn('_auth_user_id', self.client.session)
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_setup_attempt_limit_rate_limit_and_expired_secret_cleanup(self):
         import io
@@ -216,3 +228,9 @@ class OtpAuthTests(TestCase):
         self.now += timedelta(minutes=6)
         call_command("cleanup_otp_challenges", stdout=io.StringIO())
         self.assertFalse(OtpChallenge.objects.exists())
+
+    @override_settings(LOGIN_SECOND_FACTOR_REQUIRED=False)
+    def test_old_flag_cannot_skip_totp_for_existing_credential(self):
+        challenge = self.begin_login()
+        self.assertEqual(challenge['method'], 'totp')
+        self.assertNotIn('_auth_user_id', self.client.session)

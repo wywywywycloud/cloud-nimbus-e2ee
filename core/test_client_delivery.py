@@ -1,3 +1,4 @@
+from accounts.test_support import completed_account, onboarding_session
 from pathlib import Path
 import tempfile
 import uuid
@@ -32,7 +33,7 @@ class DeliveryAndDisabledIntegrationTests(TestCase):
                 self.assertEqual(self.client.get("/vault/.env").status_code, 404)
         with self.settings(OPAQUE_ENABLED=False):
             login = self.client.get("/auth/login/")
-            self.assertContains(login, '/vault/verify.html')
+            self.assertRedirects(login, '/vault/', fetch_redirect_response=False)
 
     def test_telegram_disabled_without_network_or_state_change(self):
         with patch("accounts.telegram.urlopen") as network:
@@ -44,12 +45,14 @@ class DeliveryAndDisabledIntegrationTests(TestCase):
             call_command("run_telegram_bot")
         self.assertEqual(self.client.post("/auth/telegram/webhook/", data="{}", content_type="application/json").status_code, 410)
         self.client.force_login(self.user)
-        self.assertEqual(self.client.post("/auth/telegram/link/").status_code, 410)
+        onboarding_session(self.client, self.user)
+        self.assertEqual(self.client.post("/auth/telegram/link/").status_code, 503)
         self.assertEqual(self.client.get("/auth/telegram/status/").json(), {"enabled": False, "linked": False})
-        self.assertNotContains(self.client.get("/auth/settings/"), 'data-telegram-card')
+        self.assertEqual(self.client.get("/auth/settings/").status_code, 403)
 
     def test_plaintext_ingress_is_closed_including_old_upload_sessions(self):
         self.client.force_login(self.user)
+        completed_account(self.client, self.user)
         self.assertRedirects(self.client.get("/"), "/vault/", fetch_redirect_response=False)
         uid = uuid.uuid4()
         for method, path in [("post", "/upload/"), ("post", "/api/uploads/initiate/"),

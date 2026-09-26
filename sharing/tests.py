@@ -1,3 +1,4 @@
+from accounts.test_support import completed_account
 import shutil
 import tempfile
 from datetime import timedelta
@@ -70,6 +71,7 @@ class SharingFlowTests(TestCase):
     def test_owner_manage_page_renders_existing_link(self):
         link = self.create_link(expires_at=timezone.now() + timedelta(days=1))
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         response = self.client.get(reverse("sharing:file_shares", args=[self.file.pk]))
         self.assertContains(response, self.file.display_name)
         self.assertContains(response, reverse("sharing:public_share", args=[link.public_token]))
@@ -82,6 +84,7 @@ class SharingFlowTests(TestCase):
         self.assertIn(reverse("accounts:login"), response.url)
 
         self.client.force_login(self.member)
+        completed_account(self.client, self.member)
         self.assert_download(self.client.get(url))
 
     def test_password_link_requires_login_then_records_token_revision(self):
@@ -90,6 +93,7 @@ class SharingFlowTests(TestCase):
         self.assertEqual(self.client.get(url).status_code, 302)
 
         self.client.force_login(self.member)
+        completed_account(self.client, self.member)
         self.assertContains(self.client.get(url), "Пароль ссылки")
         self.assertContains(self.client.post(url, {"password": "wrong-pass"}), "Неверный пароль")
         response = self.client.post(url, {"password": "share-pass-42"})
@@ -104,9 +108,11 @@ class SharingFlowTests(TestCase):
         url = reverse("sharing:public_share", args=[link.public_token])
         member = Client()
         member.force_login(self.member)
+        completed_account(member, self.member)
         member.post(url, {"password": "share-pass-42"})
 
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         update_url = reverse("sharing:update", args=[link.pk])
         self.client.post(update_url, {"access_mode": "password", "password": "new-share-pass", "expires_at": ""})
         link.refresh_from_db()
@@ -125,9 +131,11 @@ class SharingFlowTests(TestCase):
     def test_owner_routes_enforce_ownership_and_revoke_always_increments_revision(self):
         link = self.create_link()
         self.client.force_login(self.member)
+        completed_account(self.client, self.member)
         self.assertEqual(self.client.post(reverse("sharing:revoke", args=[link.pk])).status_code, 404)
 
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         self.client.post(reverse("sharing:revoke", args=[link.pk]))
         link.refresh_from_db()
         self.assertFalse(link.active)
@@ -136,6 +144,7 @@ class SharingFlowTests(TestCase):
 
     def test_create_and_revoke_all_owner_links(self):
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         response = self.client.post(
             reverse("sharing:create", args=[self.file.pk]),
             {"access_mode": "password", "password": "created-pass", "expires_at": ""},
@@ -185,6 +194,7 @@ class SharingFlowTests(TestCase):
         link = self.create_link(ShareLink.AccessMode.RESTRICTED)
         url = reverse("sharing:public_share", args=[link.public_token])
         self.client.force_login(self.member)
+        completed_account(self.client, self.member)
         self.assertEqual(self.client.get(url).status_code, 404)
         FileGrant.objects.create(file=self.file, granted_by=self.owner, user=self.member, email=self.member.email)
         self.assert_download(self.client.get(url))
@@ -198,11 +208,13 @@ class SharingFlowTests(TestCase):
 
     def test_share_dialog_api_is_owner_only_and_has_simple_general_state(self):
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         url = reverse("sharing:item_state", args=["file", self.file.pk])
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["general"]["mode"], ShareLink.AccessMode.RESTRICTED)
         self.client.force_login(self.member)
+        completed_account(self.client, self.member)
         self.assertEqual(self.client.get(url).status_code, 404)
 
     def test_shared_folder_browses_descendants_and_blocks_outside_file(self):
@@ -240,6 +252,7 @@ class SharingFlowTests(TestCase):
     def test_folder_invite_creates_restricted_link_and_allows_member(self):
         folder = Folder.objects.create(owner=self.owner, name="Photos")
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         response = self.client.post(
             reverse("sharing:item_grant", args=["folder", folder.pk]),
             {"email": self.member.email, "role": FileGrant.Role.VIEWER},
@@ -249,12 +262,14 @@ class SharingFlowTests(TestCase):
         self.assertEqual(link.access_mode, ShareLink.AccessMode.RESTRICTED)
         self.assertTrue(FileGrant.objects.filter(folder=folder, user=self.member).exists())
         self.client.force_login(self.member)
+        completed_account(self.client, self.member)
         self.assertEqual(self.client.get(reverse("sharing:public_share", args=[link.public_token])).status_code, 200)
 
     def test_registered_member_can_disable_share_emails(self):
         self.member.email_share_notifications = False
         self.member.save(update_fields=["email_share_notifications"])
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         response = self.client.post(
             reverse("sharing:item_grant", args=["file", self.file.pk]),
             {"email": self.member.email, "role": FileGrant.Role.VIEWER},
@@ -264,6 +279,7 @@ class SharingFlowTests(TestCase):
 
     def test_external_invitee_always_receives_the_access_link(self):
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         response = self.client.post(
             reverse("sharing:item_grant", args=["file", self.file.pk]),
             {"email": "outside@example.com", "role": FileGrant.Role.VIEWER},
@@ -283,12 +299,14 @@ class SharingFlowTests(TestCase):
         )
         member_client = Client()
         member_client.force_login(self.member)
+        completed_account(member_client, self.member)
         page = member_client.get(reverse("sharing:shared_with_me"))
         self.assertContains(page, "Research")
         self.assertContains(page, self.owner.email)
         self.assertContains(page, reverse("sharing:public_share", args=[link.public_token]))
 
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         self.client.post(reverse("sharing:revoke_grant", args=[grant.pk]))
         page = member_client.get(reverse("sharing:shared_with_me"))
         self.assertNotContains(page, "Research")
@@ -296,6 +314,7 @@ class SharingFlowTests(TestCase):
 
     def test_share_dialog_rejects_inviting_the_owner(self):
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         response = self.client.post(
             reverse("sharing:item_grant", args=["file", self.file.pk]),
             {"email": self.owner.email, "role": FileGrant.Role.VIEWER},
@@ -307,6 +326,7 @@ class SharingFlowTests(TestCase):
     def test_revoked_link_cannot_be_reactivated_through_update(self):
         link = self.create_link()
         self.client.force_login(self.owner)
+        completed_account(self.client, self.owner)
         self.client.post(reverse("sharing:revoke", args=[link.pk]))
         response = self.client.post(
             reverse("sharing:update", args=[link.pk]),

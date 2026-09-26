@@ -175,7 +175,7 @@ def username_reminder_view(request):
 
 @login_required
 def settings_view(request, section="account"):
-    if getattr(settings, "OPAQUE_ENABLED", True) and request.method == "POST" and request.POST.get("action", "auth_mode") == "auth_mode":
+    if request.method == "POST" and request.POST.get("action", "auth_mode") == "auth_mode":
         return JsonResponse({"error": "use_opaque_or_passkey", "client": "/vault/"}, status=410)
     if section not in {"account", "storage", "interface"}:
         return HttpResponseBadRequest("Неизвестный раздел настроек")
@@ -239,21 +239,22 @@ def settings_view(request, section="account"):
 @login_required
 @require_POST
 def telegram_link_view(request):
-    if not settings.TELEGRAM_ENABLED:
-        return JsonResponse({"error": "telegram_disabled"}, status=410)
-    if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_BOT_USERNAME:
-        messages.error(request, "Telegram-бот ещё не настроен.")
-        return redirect("accounts:settings")
+    if not settings.TELEGRAM_ENABLED or not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_BOT_USERNAME:
+        return JsonResponse({"error": "telegram_unavailable"}, status=503)
+    from django.db import transaction
+    from core.audit import allow_action
+    if not allow_action("telegram_link", str(request.user.pk), limit=10, window_seconds=900):
+        return JsonResponse({"error": "rate_limited"}, status=429)
     token = secrets.token_urlsafe(24)
     now = timezone.now()
-    TelegramLinkAttempt.objects.filter(user=request.user, used_at__isnull=True).update(expires_at=now)
-    TelegramLinkAttempt.objects.create(
-        user=request.user,
-        token_digest=TelegramLinkAttempt.digest_token(token),
-        expires_at=now + timedelta(seconds=settings.TELEGRAM_LINK_TTL_SECONDS),
-    )
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(pk=request.user.pk)
+        if user.telegram_user_id:
+            return JsonResponse({"error": "telegram_already_linked"}, status=409)
+        TelegramLinkAttempt.objects.filter(user=user, used_at__isnull=True).update(expires_at=now)
+        attempt = TelegramLinkAttempt.objects.create(user=user, token_digest=TelegramLinkAttempt.digest_token(token), expires_at=now + timedelta(seconds=min(settings.TELEGRAM_LINK_TTL_SECONDS, 900)))
     audit(request, "telegram.link_started")
-    return redirect(f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}")
+    return JsonResponse({"url": f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}", "expires_at": attempt.expires_at.isoformat()})
 
 
 @login_required

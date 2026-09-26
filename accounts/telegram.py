@@ -58,17 +58,15 @@ def _handle_start(message, sender, chat_id, text):
     parts = text.split(maxsplit=1)
     token = parts[1].strip() if len(parts) == 2 else ""
     now = timezone.now()
-    attempt = TelegramLinkAttempt.objects.filter(
-        token_digest=TelegramLinkAttempt.digest_token(token),
-        used_at__isnull=True,
-        expires_at__gt=now,
-    ).first() if token else None
-    if not attempt:
-        send_message(chat_id, "Ссылка недействительна или устарела. Создайте новую в настройках cloud.nimbus.", reply_markup={"remove_keyboard": True})
-        return False
-    attempt.telegram_chat_id = chat_id
-    attempt.telegram_sender_id = sender["id"]
-    attempt.save(update_fields=["telegram_chat_id", "telegram_sender_id"])
+    with transaction.atomic():
+        attempt = TelegramLinkAttempt.objects.select_for_update().filter(
+            token_digest=TelegramLinkAttempt.digest_token(token), used_at__isnull=True, expires_at__gt=now,
+        ).first() if token else None
+        if not attempt or attempt.telegram_sender_id is not None:
+            return False
+        attempt.telegram_chat_id = chat_id
+        attempt.telegram_sender_id = sender["id"]
+        attempt.save(update_fields=["telegram_chat_id", "telegram_sender_id"])
     _send_contact_request(chat_id)
     return True
 
@@ -80,9 +78,14 @@ def _handle_contact(message, sender, chat_id, contact):
         send_message(chat_id, "Можно подтвердить только собственный Telegram-аккаунт.", reply_markup={"remove_keyboard": True})
         return False
 
+    candidate = TelegramLinkAttempt.objects.filter(telegram_chat_id=chat_id, telegram_sender_id=sender_id, used_at__isnull=True, expires_at__gt=now).order_by('-created_at').first()
+    if candidate is None:
+        return False
     try:
         with transaction.atomic():
-            attempt = TelegramLinkAttempt.objects.select_for_update().select_related("user").filter(
+            user = User.objects.select_for_update().get(pk=candidate.user_id)
+            attempt = TelegramLinkAttempt.objects.select_for_update().filter(
+                pk=candidate.pk,
                 telegram_chat_id=chat_id,
                 telegram_sender_id=sender_id,
                 used_at__isnull=True,
@@ -91,7 +94,8 @@ def _handle_contact(message, sender, chat_id, contact):
             if not attempt:
                 send_message(chat_id, "Сначала откройте свежую ссылку из настроек cloud.nimbus.", reply_markup={"remove_keyboard": True})
                 return False
-            user = User.objects.select_for_update().get(pk=attempt.user_id)
+            if not user.is_active or user.scheduled_deletion_at or user.telegram_user_id:
+                return False
             if User.objects.exclude(pk=user.pk).filter(telegram_user_id=sender_id).exists():
                 send_message(chat_id, "Этот Telegram уже привязан к другому аккаунту cloud.nimbus.", reply_markup={"remove_keyboard": True})
                 return False
@@ -99,8 +103,7 @@ def _handle_contact(message, sender, chat_id, contact):
             user.telegram_username = (sender.get("username") or "")[:64]
             user.telegram_first_name = (sender.get("first_name") or contact.get("first_name") or "")[:128]
             user.telegram_linked_at = now
-            user.quota_bytes = max(user.quota_bytes, settings.TELEGRAM_VERIFIED_QUOTA_BYTES)
-            user.save(update_fields=["telegram_user_id", "telegram_username", "telegram_first_name", "telegram_linked_at", "quota_bytes"])
+            user.save(update_fields=["telegram_user_id", "telegram_username", "telegram_first_name", "telegram_linked_at"])
             attempt.used_at = now
             attempt.save(update_fields=["used_at"])
     except IntegrityError:
@@ -109,7 +112,7 @@ def _handle_contact(message, sender, chat_id, contact):
 
     send_message(
         chat_id,
-        "Готово: Telegram привязан, 50 MiB доступны. Перепривязать аккаунт можно в настройках cloud.nimbus.",
+        "Telegram подтверждён. Вернитесь в cloud.nimbus и завершите настройку passkey и TOTP.",
         reply_markup={"remove_keyboard": True},
     )
     return True

@@ -22,6 +22,8 @@ from opaque_auth.models import OpaqueCredential
 from otp_auth.models import OtpChallenge, TotpCredential
 from vaults.models import BlobDeletion, CipherFile, Vault
 
+from accounts.test_support import factors, onboarding_session
+
 from .models import PasskeyChallenge, PasskeyCredential, PasskeyIdentity, PasskeyReset
 from .views import PRF_SALT
 
@@ -61,6 +63,9 @@ class Authenticator:
 @override_settings(PASSKEY_RP_ID="testserver", PASSKEY_ORIGIN="https://testserver", PASSKEY_REQUIRED=True, EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
 class PasskeyTests(TestCase):
     def setUp(self):
+        telegram = patch("accounts.telegram.send_message")
+        telegram.start()
+        self.addCleanup(telegram.stop)
         self.media = tempfile.TemporaryDirectory()
         self.addCleanup(self.media.cleanup)
         override = override_settings(MEDIA_ROOT=self.media.name)
@@ -69,7 +74,9 @@ class PasskeyTests(TestCase):
         self.user = get_user_model().objects.create_user(username="owner", email="owner@example.test", password=None, email_verified=True)
         OpaqueCredential.objects.create(user=self.user, registration_record="opaque-record")
         self.vault = Vault.objects.create(owner=self.user, wrapped_key=encrypted())
+        factors(self.user)
         self.client.force_login(self.user)
+        onboarding_session(self.client, self.user)
         session = self.client.session
         session["opaque_recent_auth"] = {"user_id": self.user.pk, "credential_version": 1, "authenticated_at": timezone.now().timestamp()}
         session.save()
@@ -102,9 +109,10 @@ class PasskeyTests(TestCase):
         return response, client
 
     def reset_start(self, client=None):
-        response = self.post("reset/start", {"email": self.user.email}, client=client)
+        with patch("accounts.telegram.send_message") as send:
+            response = self.post("reset/start", {"username": self.user.username}, client=client)
         self.assertEqual(response.status_code, 200)
-        return response.json()["challenge"], re.search(r"Код: ([0-9]{6})", mail.outbox[-1].body).group(1)
+        return response.json()["challenge"], re.search(r"Код: ([0-9]{6})", send.call_args.args[1]).group(1)
 
     def reset_finish(self, identifier, code, client=None):
         return self.post("reset/finish", {"challenge": identifier, "code": code, "confirmation": "DELETE ALL FILES"}, client=client)
@@ -161,7 +169,7 @@ class PasskeyTests(TestCase):
     def test_pending_credential_cannot_login_or_upload(self):
         self.register()
         self.assertEqual(self.login()[0].status_code, 401)
-        self.assertEqual(self.upload().json(), {"error": "passkey_required"})
+        self.assertEqual(self.upload().status_code, 403)
         self.assertFalse(CipherFile.objects.exists())
         self.assertFalse(BlobDeletion.objects.exists())
 
@@ -187,7 +195,7 @@ class PasskeyTests(TestCase):
         self.assertTrue(credential.backup_eligible)
         self.assertFalse(credential.backed_up)
         self.assertFalse(credential.active)
-        self.assertEqual(self.upload().json(), {"error": "passkey_required"})
+        self.assertEqual(self.upload().status_code, 403)
 
     def test_loss_of_backup_state_allows_reading_but_blocks_uploads(self):
         self.activate()
@@ -195,9 +203,9 @@ class PasskeyTests(TestCase):
         item = CipherFile.objects.get()
         response, client = self.login(flags=0x0D)
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(client.get("/api/cypher/session/").json()["passkey_ready"])
+        self.assertFalse(client.get("/api/cypher/session/").json()["upload_ready"])
         self.assertEqual(client.get(f"/api/cypher/files/{item.pk}/download/").status_code, 200)
-        self.assertEqual(self.upload().json(), {"error": "passkey_required"})
+        self.assertEqual(self.upload().status_code, 403)
         self.assertEqual(self.login()[0].status_code, 200)
         self.assertTrue(self.client.get("/api/cypher/session/").json()["passkey_ready"])
 
@@ -221,7 +229,7 @@ class PasskeyTests(TestCase):
         self.activate()
         data = self.client.get("/api/cypher/session/").json()
         self.assertTrue(data["passkey_ready"])
-        self.assertEqual(data["user"]["email"], self.user.email)
+        self.assertEqual(data["user"], {"username": self.user.username})
         self.assertEqual(self.upload().status_code, 201)
         with self.captureOnCommitCallbacks(execute=True):
             response = self.client.post("/api/cypher/reset/", {"vault_id": str(self.vault.pk), "confirmation": "DELETE"}, content_type="application/json")
@@ -263,16 +271,16 @@ class PasskeyTests(TestCase):
         self.assertEqual(self.login(count=2)[0].status_code, 401)
         self.assertEqual(self.login(count=3)[0].status_code, 200)
 
-    def test_email_selected_login_cannot_use_another_account(self):
+    def test_telegram_selected_login_cannot_use_another_account(self):
         self.activate()
-        options = self.post("login/start", {"email": "unknown@example.test"}).json()
+        options = self.post("login/start", {"username": "unknown"}).json()
         self.assertEqual(self.post("login/finish", {"challenge": options["challenge"], "credential": self.assertion(options)}).status_code, 401)
-        options = self.post("login/start", {"email": self.user.email}).json()
+        options = self.post("login/start", {"username": self.user.username}).json()
         self.assertEqual(self.post("login/finish", {"challenge": options["challenge"], "credential": self.assertion(options)}).status_code, 200)
 
-    def test_email_reset_wipes_ciphertext_revokes_sessions_and_keeps_opaque_record(self):
+    def test_telegram_reset_wipes_ciphertext_revokes_sessions_and_keeps_opaque_record(self):
         self.activate()
-        TotpCredential.objects.create(user=self.user, secret="A" * 32)
+        TotpCredential.objects.update_or_create(user=self.user, defaults={"secret": "A" * 32})
         OtpChallenge.objects.create(user=self.user, kind="setup", method="totp", session_digest="x" * 64, payload={"secret": "A" * 32}, expires_at=timezone.now() + timedelta(minutes=5))
         self.assertEqual(self.upload().status_code, 201)
         storage_key = CipherFile.objects.get().storage_key
@@ -293,24 +301,25 @@ class PasskeyTests(TestCase):
         self.assertFalse(TotpCredential.objects.exists())
         self.assertFalse(OtpChallenge.objects.exists())
         self.assertEqual(self.user.used_bytes, 0)
-        self.assertTrue(OpaqueCredential.objects.filter(user=self.user, registration_record="opaque-record").exists())
+        self.assertFalse(OpaqueCredential.objects.filter(user=self.user).exists())
+        self.assertEqual(old_client.get("/api/cypher/files/").status_code, 401)
         self.assertFalse(old_client.get("/api/cypher/session/").json()["authenticated"])
         self.assertTrue(anonymous.get("/api/cypher/session/").json()["authenticated"])
         self.assertIn("passkey_recent_reset", anonymous.session)
         self.assertEqual(self.reset_finish(identifier, code, anonymous).status_code, 401)
         response = anonymous.post("/api/cypher/vault/", {"id": str(self.vault.pk), "version": 1, "wrapped_key": encrypted()}, content_type="application/json")
-        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.status_code, 403)
 
-    def test_email_reset_requires_exact_confirmation_and_bound_session(self):
+    def test_telegram_reset_requires_exact_confirmation_and_bound_session(self):
         identifier, code = self.reset_start()
         self.assertEqual(self.reset_finish(identifier, code, Client()).status_code, 401)
         self.assertEqual(self.post("reset/finish", {"challenge": identifier, "code": code, "confirmation": "DELETE"}).status_code, 401)
         self.vault.refresh_from_db()
         self.assertIsNone(self.vault.revoked_at)
 
-    def test_email_reset_invalidates_other_pending_reset_and_auth_challenges(self):
+    def test_telegram_reset_invalidates_other_pending_reset_and_auth_challenges(self):
         self.activate()
-        pending_login = self.post("login/start", {"email": self.user.email}).json()
+        pending_login = self.post("login/start", {"username": self.user.username}).json()
         pending_assertion = self.assertion(pending_login)
         first_id, first_code = self.reset_start()
         other = Client()
@@ -319,7 +328,7 @@ class PasskeyTests(TestCase):
         self.assertEqual(self.reset_finish(other_id, other_code, other).status_code, 401)
         self.assertEqual(self.post("login/finish", {"challenge": pending_login["challenge"], "credential": pending_assertion}).status_code, 401)
 
-    def test_email_code_max_five_guesses_and_expiration(self):
+    def test_telegram_code_max_five_guesses_and_expiration(self):
         identifier, code = self.reset_start()
         wrong = "000000" if code != "000000" else "999999"
         for _ in range(5):
@@ -330,23 +339,35 @@ class PasskeyTests(TestCase):
         PasskeyReset.objects.filter(pk=identifier).update(expires_at=timezone.now() - timedelta(seconds=1))
         self.assertEqual(self.reset_finish(identifier, code).status_code, 401)
 
-    def test_unknown_email_is_neutral_and_does_not_send_mail(self):
+    def test_unknown_username_is_neutral_and_does_not_send(self):
         mail.outbox = []
-        response = self.post("reset/start", {"email": "unknown@example.test"})
+        response = self.post("reset/start", {"username": "unknown"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(set(response.json()), {"challenge"})
         self.assertEqual(len(mail.outbox), 0)
 
-    def test_email_reset_limits_and_csrf(self):
+    def test_telegram_reset_limits_and_csrf(self):
         for _ in range(5):
-            self.assertEqual(self.post("reset/start", {"email": self.user.email}).status_code, 200)
-        self.assertEqual(self.post("reset/start", {"email": self.user.email}).status_code, 429)
+            self.assertEqual(self.post("reset/start", {"username": self.user.username}).status_code, 200)
+        self.assertEqual(self.post("reset/start", {"username": self.user.username}).status_code, 429)
         client = Client(enforce_csrf_checks=True)
         self.assertEqual(self.post("login/start", {}, client=client).status_code, 403)
-        self.assertEqual(self.post("reset/start", {"email": self.user.email}, client=client).status_code, 403)
+        self.assertEqual(self.post("reset/start", {"username": self.user.username}, client=client).status_code, 403)
 
     def test_revoked_vault_never_authenticates(self):
         self.activate()
         self.vault.revoked_at = timezone.now()
         self.vault.save(update_fields=["revoked_at"])
         self.assertEqual(self.login()[0].status_code, 401)
+
+    def test_reset_code_cannot_survive_telegram_identity_change(self):
+        identifier, code = self.reset_start()
+        self.user.telegram_user_id += 1
+        self.user.save(update_fields=['telegram_user_id'])
+        self.assertEqual(self.reset_finish(identifier, code).status_code, 401)
+        self.vault.refresh_from_db()
+        self.assertIsNone(self.vault.revoked_at)
+
+    def test_email_payloads_are_rejected(self):
+        for route in ('login/start', 'reset/start'):
+            self.assertEqual(self.post(route, {'email': self.user.email}).status_code, 401)

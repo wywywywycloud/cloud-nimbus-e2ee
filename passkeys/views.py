@@ -11,8 +11,6 @@ from functools import wraps
 from django.conf import settings
 from django.contrib.auth import get_user_model, login
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
-from django.core.mail import send_mail
-from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.db.models import Sum
 from django.http import JsonResponse
@@ -82,7 +80,7 @@ def _body(request, required, optional=()):
 
 
 def _available(user):
-    return user is not None and user.is_authenticated and user.is_active and user.email_verified and user.scheduled_deletion_at is None
+    return user is not None and user.is_authenticated and user.is_active and user.scheduled_deletion_at is None
 
 
 def _recent(request, user):
@@ -201,19 +199,19 @@ def _verify_assertion(credential, response, payload, user):
 @endpoint
 def register_start(request):
     _body(request, set())
-    if not _available(request.user) or not _recent(request, request.user):
+    if (not _available(request.user) or not request.user.telegram_user_id) or not _recent(request, request.user):
         return _error()
     if not _rate(request, "register", str(request.user.pk)):
         return _error("rate_limited", 429)
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=request.user.pk)
-        if not _available(user) or not _recent(request, user):
+        if (not _available(user) or not user.telegram_user_id) or not _recent(request, user):
             return _error()
         if PasskeyCredential.objects.filter(user=user, active=True).exists():
             return _error("credential_already_exists", 409)
         identity, _ = PasskeyIdentity.objects.get_or_create(user=user)
         challenge, raw = _issue(request, "register", user=user)
-    options = generate_registration_options(rp_id=settings.PASSKEY_RP_ID, rp_name="cloud.nimbus", user_id=bytes(identity.user_handle), user_name=user.email, user_display_name=user.username, challenge=raw, timeout=120000, authenticator_selection=AuthenticatorSelectionCriteria(resident_key=ResidentKeyRequirement.REQUIRED, require_resident_key=True, user_verification=UserVerificationRequirement.REQUIRED))
+    options = generate_registration_options(rp_id=settings.PASSKEY_RP_ID, rp_name="cloud.nimbus", user_id=bytes(identity.user_handle), user_name=user.username, user_display_name=user.username, challenge=raw, timeout=120000, authenticator_selection=AuthenticatorSelectionCriteria(resident_key=ResidentKeyRequirement.REQUIRED, require_resident_key=True, user_verification=UserVerificationRequirement.REQUIRED))
     return _options(challenge, options)
 
 
@@ -221,7 +219,7 @@ def register_start(request):
 def register_finish(request):
     body = _body(request, {"challenge", "credential"})
     consumed = _consume(request, body["challenge"], "register")
-    if consumed is None or not _available(request.user) or consumed[1] != request.user.pk:
+    if consumed is None or (not _available(request.user) or not request.user.telegram_user_id) or consumed[1] != request.user.pk:
         return _error()
     payload, _ = consumed
     response = _credential(body["credential"], registration=True)
@@ -231,7 +229,7 @@ def register_finish(request):
     try:
         with transaction.atomic():
             user = User.objects.select_for_update().get(pk=request.user.pk)
-            if not _available(user) or not _recent(request, user) or not hmac.compare_digest(payload["auth_hash"], user.get_session_auth_hash()):
+            if (not _available(user) or not user.telegram_user_id) or not _recent(request, user) or not hmac.compare_digest(payload["auth_hash"], user.get_session_auth_hash()):
                 return _error()
             if PasskeyCredential.objects.filter(user=user, active=True).exists():
                 return _error("credential_already_exists", 409)
@@ -245,7 +243,7 @@ def register_finish(request):
 @endpoint
 def activate_start(request):
     body = _body(request, {"credential_id"})
-    if not _available(request.user) or not _recent(request, request.user):
+    if (not _available(request.user) or not request.user.telegram_user_id) or not _recent(request, request.user):
         return _error()
     credential = PasskeyCredential.objects.filter(user=request.user, credential_id=body["credential_id"], active=False).first()
     if credential is None or credential.created_at < timezone.now() - timedelta(minutes=5):
@@ -258,7 +256,7 @@ def activate_start(request):
 def activate_finish(request):
     body = _body(request, {"challenge", "credential", "vault_id", "wrapped_key"})
     consumed = _consume(request, body["challenge"], "activate")
-    if consumed is None or not _available(request.user) or consumed[1] != request.user.pk:
+    if consumed is None or (not _available(request.user) or not request.user.telegram_user_id) or consumed[1] != request.user.pk:
         return _error()
     payload, _ = consumed
     response = _credential(body["credential"])
@@ -266,7 +264,7 @@ def activate_finish(request):
     wrapped_key = envelope(body["wrapped_key"], wrapped_key=True)
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=request.user.pk)
-        if not _available(user) or not _recent(request, user) or not hmac.compare_digest(payload["auth_hash"], user.get_session_auth_hash()):
+        if (not _available(user) or not user.telegram_user_id) or not _recent(request, user) or not hmac.compare_digest(payload["auth_hash"], user.get_session_auth_hash()):
             return _error()
         vault = Vault.objects.select_for_update().filter(pk=vault_id, owner=user, revoked_at__isnull=True).first()
         credential = PasskeyCredential.objects.select_for_update().filter(user=user, credential_id=payload["credential_id"], active=False).first()
@@ -281,26 +279,30 @@ def activate_finish(request):
         credential.save(update_fields=["active", "vault", "wrapped_key"])
     request.session["passkey_recent_auth"] = {"user_id": user.pk, "authenticated_at": timezone.now().timestamp()}
     request.session.pop("passkey_recent_reset", None)
+    from accounts.onboarding import state
+    if not state(user)["onboarding_required"]:
+        request.session["nimbus_access"] = user.pk
     audit(request, "passkey.activated", actor=user)
     return JsonResponse({"ok": True})
 
 
 @endpoint
 def login_start(request):
-    body = _body(request, set(), {"email"})
-    email = body.get("email", "")
-    if not isinstance(email, str) or len(email) > 254:
-        raise ValueError("invalid_email")
-    email = email.strip().lower()
-    if email:
-        validate_email(email)
-    if not _rate(request, "login", email or "discoverable", limit=30):
+    body = _body(request, set(), {"username"})
+    username = body.get("username", "")
+    if not isinstance(username, str) or len(username) > 254:
+        raise ValueError("invalid_username")
+    username = username.strip().lower()
+    if username:
+        from opaque_auth.views import _username
+        username = _username(username)
+    if not _rate(request, "login", username or "discoverable", limit=30):
         return _error("rate_limited", 429)
-    user = User.objects.filter(email=email, is_active=True, email_verified=True, scheduled_deletion_at__isnull=True).first() if email else None
+    user = User.objects.filter(username=username, is_active=True, scheduled_deletion_at__isnull=True).first() if username else None
     credential = PasskeyCredential.objects.filter(user=user, active=True, vault__revoked_at__isnull=True).first() if user else None
     challenge, raw = _issue(request, "login", user=user, credential=credential)
-    if email and credential is None:
-        # Match the shape of an existing email without revealing credential IDs.
+    if username and credential is None:
+        # Match the shape of an existing username without revealing credential IDs.
         unavailable_id = secrets.token_bytes(32)
         challenge.payload["credential_id"] = _b64(unavailable_id)
         challenge.save(update_fields=["payload"])
@@ -332,7 +334,8 @@ def login_finish(request):
             return _error()
         _verify_assertion(credential, response, payload, user)
         vault_data = {"id": str(credential.vault_id), "version": credential.vault.version, "wrapped_key": credential.wrapped_key}
-        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        from accounts.onboarding import begin
+        begin(request, user, full=True)
         request.session["passkey_recent_auth"] = {"user_id": user.pk, "authenticated_at": timezone.now().timestamp()}
     audit(request, "passkey.login", actor=user)
     return JsonResponse({"username": user.username, "vault": vault_data})
@@ -345,23 +348,25 @@ def _code_digest(identifier, code):
 @endpoint
 @sensitive_variables()
 def reset_start(request):
-    body = _body(request, {"email"})
-    if not isinstance(body["email"], str) or len(body["email"]) > 254:
-        raise ValueError("invalid_email")
-    email = body["email"].strip().lower()
-    validate_email(email)
-    if not _rate(request, "reset", email, limit=5):
+    body = _body(request, {"username"})
+    if not isinstance(body["username"], str) or len(body["username"]) > 254:
+        raise ValueError("invalid_username")
+    username = body["username"].strip().lower()
+    from opaque_auth.views import _username
+    username = _username(username)
+    if not _rate(request, "reset", username, limit=5):
         return _error("rate_limited", 429)
-    user = User.objects.filter(email=email, is_active=True, email_verified=True, scheduled_deletion_at__isnull=True).first()
+    user = User.objects.filter(username=username, is_active=True, scheduled_deletion_at__isnull=True).first()
     code = f"{secrets.randbelow(1000000):06d}"
     identifier = uuid.uuid4()
-    challenge = PasskeyReset.objects.create(id=identifier, user=user, session_digest=_session_digest(request, create=True), code_digest=_code_digest(identifier, code), auth_hash=user.get_session_auth_hash() if user else "", expires_at=timezone.now() + timedelta(minutes=10))
-    if user:
+    challenge = PasskeyReset.objects.create(id=identifier, user=user, session_digest=_session_digest(request, create=True), code_digest=_code_digest(identifier, code), auth_hash=user.get_session_auth_hash() if user else "", telegram_user_id=user.telegram_user_id if user else None, expires_at=timezone.now() + timedelta(minutes=10))
+    if user and user.telegram_user_id:
         try:
-            send_mail("cloud.nimbus: сброс passkey и удаление файлов", f"Код: {code}\n\nСброс passkey полностью удалит файлы хранилища. Код действует 10 минут. Если вы не запрашивали сброс, ничего не делайте.", settings.DEFAULT_FROM_EMAIL, [user.email])
+            from accounts.telegram import send_message
+            send_message(user.telegram_user_id, f"cloud.nimbus: сброс passkey полностью удалит файлы. Код: {code}. Действует 10 минут. Если вы не запрашивали сброс, не сообщайте код.")
         except Exception:
-            # Keep the same public response for unknown emails and mail errors.
-            audit(request, "passkey.reset_email_failed", success=False, actor=user)
+            # Keep the same public response for unknown usernames and Telegram delivery errors.
+            audit(request, "passkey.reset_telegram_failed", success=False, actor=user)
     return JsonResponse({"challenge": str(challenge.pk)})
 
 
@@ -383,7 +388,7 @@ def reset_finish(request):
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=candidate.user_id)
         challenge = PasskeyReset.objects.select_for_update().get(pk=identifier)
-        if challenge.consumed_at or challenge.attempts >= 5 or challenge.expires_at <= timezone.now() or not hmac.compare_digest(challenge.session_digest, binding) or not _available(user) or not hmac.compare_digest(challenge.auth_hash, user.get_session_auth_hash()):
+        if challenge.consumed_at or challenge.attempts >= 5 or challenge.expires_at <= timezone.now() or not hmac.compare_digest(challenge.session_digest, binding) or not _available(user) or not user.telegram_user_id or user.telegram_user_id != challenge.telegram_user_id or not hmac.compare_digest(challenge.auth_hash, user.get_session_auth_hash()):
             return _error()
         challenge.attempts += 1
         matches = hmac.compare_digest(challenge.code_digest, _code_digest(identifier, body["code"]))
@@ -402,13 +407,16 @@ def reset_finish(request):
         PasskeyCredential.objects.filter(user=user).delete()
         PasskeyChallenge.objects.filter(user=user).delete()
         OpaqueChallenge.objects.filter(user=user).delete()
+        OpaqueCredential.objects.filter(user=user).delete()
         OtpChallenge.objects.filter(user=user).delete()
         TotpCredential.objects.filter(user=user).delete()
         user.used_bytes = max(0, user.used_bytes - released)
         user.set_unusable_password()
         user.save(update_fields=["password", "used_bytes"])
         request.session.flush()
-        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        from accounts.onboarding import begin
+        begin(request, user)
+        request.session["password_setup_required"] = True
         request.session["passkey_recent_reset"] = {"user_id": user.pk, "authenticated_at": timezone.now().timestamp()}
     audit(request, "passkey.reset_and_files_deleted", actor=user)
     return JsonResponse({"ok": True})

@@ -4,6 +4,19 @@
 
 ## Текущие решения
 
+### AUTH-003 — Обязательный Telegram → passkey → TOTP, без email
+
+- **Решение пользователя 26 сентября 2026:** username и OPAQUE-пароль, затем Telegram, затем passkey/PRF и TOTP. Email-вход/verification/recovery удалены из доступных маршрутов. AUTH-001/002, TG-007 и email-часть RECOVERY-001 ниже сохранены как история предыдущего решения и переопределены этой записью.
+- **Реализация:** ограниченная 15-минутная onboarding-сессия; только текущий шаг, без файлов/legacy endpoints. Telegram одноразовый token, TTL, первый sender/chat binding, собственный contact, unique TG ID; перепривязка запрещена. Последующий OPAQUE-вход обязательно требует TOTP. Passkey остаётся криптографическим альтернативным входом. Upload безусловно требует TG + TOTP + активный BE=1/BS=1 конверт и повторную проверку под lock.
+- **Reset:** код только привязанному Telegram + DELETE ALL FILES удаляет ciphertext, wrappers, OPAQUE/passkey/TOTP и отзывает сессии; затем обязателен новый пароль, пустой vault, passkey и TOTP. Старые файлы сохраняются только при наличии клиентского секрета. См. [AUTH_API.md](AUTH_API.md).
+- **Граница:** физическая синхронизация provider passkey не проверена; Telegram/TOTP не расшифровывают файлы. Локальные mocks не являются проверкой доставки настоящим ботом.
+
+### DEPLOY-001 — Подготовленная single-host конфигурация
+
+- **Статус:** подготовлена локально, production пока не развёрнут.
+- **Решение:** systemd, Gunicorn 1 worker/2 threads, Nginx HTTPS nimbus.by:9443, PostgreSQL и private local ciphertext; отдельный Telegram polling service. Go gateway не подключён. Release после CI и с pinned client gitlink.
+- **Отказы:** ошибка миграции оставляет maintenance; автоматический DB rollback запрещён. Старый backup восстанавливается только изолированно с актуальными tombstones/revocations; иначе публикация запрещена. [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ### E2EE-001 — Отдельный клиент и ciphertext-only API
 
 - **Статус:** реализовано локально, проходит интеграционные проверки и security review.

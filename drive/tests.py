@@ -1,3 +1,4 @@
+from accounts.test_support import completed_account
 import tempfile
 import json
 import hashlib
@@ -21,6 +22,7 @@ class FileFlowTests(TestCase):
         self.user = User.objects.create_user(username="owner", email="owner@example.com", password="Long-passphrase-778!", email_verified=True, telegram_user_id=1001)
         self.other = User.objects.create_user(username="other", email="other@example.com", password="Long-passphrase-778!", email_verified=True, telegram_user_id=1002)
         self.client.force_login(self.user)
+        completed_account(self.client, self.user)
 
     def test_upload_download_rename_favorite_delete(self):
         response = self.client.post(reverse("drive:upload"), {"files": SimpleUploadedFile("notes.txt", b"hello nimbus", content_type="text/plain")})
@@ -62,17 +64,16 @@ class FileFlowTests(TestCase):
         self.user.telegram_user_id = None
         self.user.save(update_fields=["quota_bytes", "telegram_user_id"])
         page = self.client.get(reverse("drive:home"))
-        self.assertContains(page, "Вам доступны 50 MiB")
-        self.assertContains(page, "Загрузка заблокирована до привязки Telegram")
+        self.assertEqual(page.status_code, 403)
         response = self.client.post(reverse("drive:upload"), {"files": SimpleUploadedFile("locked.txt", b"locked")}, follow=True)
-        self.assertContains(response, "Подтвердите Telegram")
+        self.assertEqual(response.status_code, 403)
         api = self.client.post(
             reverse("drive:upload_initiate"),
             json.dumps({"name": "locked.bin", "size": 6, "content_type": "application/octet-stream"}),
             content_type="application/json",
         )
-        self.assertEqual(api.status_code, 409)
-        self.assertEqual(api.json()["error"], "telegram_required")
+        self.assertEqual(api.status_code, 403)
+        self.assertEqual(api.json()["next_step"], "telegram")
         self.assertFalse(StoredFile.objects.filter(owner=self.user).exists())
 
     def test_filename_is_reduced_to_basename(self):
@@ -218,6 +219,7 @@ class FileFlowTests(TestCase):
         self.assertEqual(self.client.get(reverse("drive:preview", args=[text.pk])).status_code, 404)
 
         self.client.force_login(self.other)
+        completed_account(self.client, self.other)
         self.assertEqual(self.client.get(reverse("drive:preview", args=[image.pk])).status_code, 404)
 
     def test_folder_navigation_is_owner_scoped_and_has_breadcrumbs(self):

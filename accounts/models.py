@@ -36,7 +36,7 @@ class User(AbstractUser):
         MODIFIED = "modified", "Сначала недавно изменённые"
         SIZE = "size", "Сначала крупные"
 
-    email = models.EmailField("почта", unique=True)
+    email = models.EmailField("почта", blank=True, default="")
     email_verified = models.BooleanField(default=False)
     auth_mode = models.CharField(max_length=20, choices=AuthMode.choices, default=AuthMode.CODE)
     ui_theme = models.CharField(max_length=5, choices=UITheme.choices, default=UITheme.DARK)

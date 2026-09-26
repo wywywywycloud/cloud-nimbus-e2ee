@@ -76,7 +76,13 @@ def _file_data(item):
 @require_GET
 def session(request):
     from otp_auth.models import TotpCredential
+    from accounts.onboarding import state, full_access, valid
+    from django.contrib.auth import logout
 
+    if _available(request.user):
+        gates = state(request.user)
+        if (not gates["onboarding_required"] and not full_access(request)) or (gates["onboarding_required"] and not valid(request)):
+            logout(request)
     token = get_token(request)
     if not _available(request.user):
         return JsonResponse({"authenticated": False, "csrf_token": token, "user": None, "quota_bytes": 0, "used_bytes": 0, "vault": None, "passkey_ready": False})
@@ -85,13 +91,14 @@ def session(request):
     return JsonResponse({
         "authenticated": True,
         "csrf_token": token,
-        "user": {"username": user.username, "email": user.email},
+        "user": {"username": user.username},
+        **state(user),
+        "password_setup_required": bool(request.session.get("password_setup_required")),
         "quota_bytes": user.quota_bytes,
         "used_bytes": user.used_bytes,
         "reserved_bytes": user.reserved_bytes,
         "vault": _vault_data(vault) if vault else None,
-        "passkey_ready": _passkey_ready(user, vault),
-        "otp_method": "totp" if TotpCredential.objects.filter(user=user).exists() else "email",
+        "otp_method": "totp" if TotpCredential.objects.filter(user=user).exists() else None,
     })
 
 
@@ -111,6 +118,8 @@ def create_vault(request):
             user = User.objects.select_for_update().get(pk=request.user.pk)
             if not _available(user):
                 return _error("authentication_required", 401)
+            if not user.telegram_user_id:
+                return _error("telegram_required", 403)
             if Vault.objects.filter(owner=user, revoked_at__isnull=True).exists():
                 return _error("vault_exists", 409)
             if Vault.objects.filter(pk=vault_id).exists():
@@ -148,10 +157,13 @@ def _upload(request):
     except (KeyError, ValueError, TypeError, RecursionError):
         return _error("invalid_upload")
 
+    from accounts.onboarding import state
+    if not state(request.user)["upload_ready"]:
+        return _error("onboarding_required", 403)
     active_vault = Vault.objects.filter(pk=vault_id, owner=request.user, revoked_at__isnull=True).first()
     if active_vault is None:
         return _error("vault_not_active", 409)
-    if settings.PASSKEY_REQUIRED and not _passkey_ready(request.user, active_vault):
+    if not _passkey_ready(request.user, active_vault):
         return _error("passkey_required", 409)
     if CipherFile.objects.filter(pk=file_id).exists():
         return _error("file_exists", 409)
@@ -177,8 +189,10 @@ def _upload(request):
                 response = _error("authentication_required", 401)
             elif vault is None:
                 response = _error("vault_not_active", 409)
-            elif settings.PASSKEY_REQUIRED and not _passkey_ready(user, vault):
+            elif not _passkey_ready(user, vault):
                 response = _error("passkey_required", 409)
+            elif not state(user)["upload_ready"]:
+                response = _error("onboarding_required", 403)
             elif user.used_bytes + user.reserved_bytes + incoming.size > user.quota_bytes:
                 response = _error("quota_exceeded", 409)
             elif CipherFile.objects.filter(pk=file_id).exists():

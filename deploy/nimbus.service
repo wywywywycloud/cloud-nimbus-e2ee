@@ -1,0 +1,35 @@
+[Unit]
+Description=Cloud Nimbus encrypted storage application
+After=network.target postgresql.service
+Requires=postgresql.service
+ConditionPathExists=/etc/nimbus/runtime.env
+
+ConditionPathExists=!/etc/nimbus/maintenance
+
+[Service]
+User=nimbus
+Group=nimbus
+WorkingDirectory=/opt/nimbus/current
+EnvironmentFile=/etc/nimbus/runtime.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/nimbus/current/.venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 1 --threads 2 --timeout 120 --max-requests 500 --max-requests-jitter 50 --worker-tmp-dir /run/nimbus
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=130
+RuntimeDirectory=nimbus
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nimbus
+RestrictSUIDSGID=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+MemoryHigh=300M
+MemoryMax=450M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

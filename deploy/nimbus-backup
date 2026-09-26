@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+exec 9>/run/lock/nimbus-release.lock
+flock -w 600 9
+[[ ! -e /etc/nimbus/maintenance ]] || { echo "Maintenance requires operator review" >&2; exit 1; }
+systemctl is-active --quiet nimbus.service || { echo "Application is not active; operator review required" >&2; exit 1; }
+systemctl stop nimbus-maintenance.timer nimbus-maintenance.service nimbus-telegram.service nimbus.service
+trap 'systemctl start nimbus.service nimbus-telegram.service nimbus-maintenance.timer' EXIT
+/usr/local/sbin/nimbus-backup-data

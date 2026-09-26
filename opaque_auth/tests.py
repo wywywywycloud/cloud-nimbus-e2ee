@@ -1,3 +1,4 @@
+import pyotp
 import base64
 import json
 import os
@@ -18,6 +19,8 @@ from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from vaults.models import Vault
+from otp_auth.models import TotpCredential
+from accounts.test_support import factors, onboarding_session
 
 from .models import OpaqueChallenge, OpaqueCredential
 from .protocol import call_opaque
@@ -109,28 +112,25 @@ class OpaqueAuthTests(TestCase):
         result = client_call("finishRegistration", password=password, clientRegistrationState=start["clientRegistrationState"], registrationResponse=response.json()["registrationResponse"], identifiers=identifiers("alice"), keyStretching="memory-constrained")
         return {"challenge": response.json()["challenge"], "registrationRecord": result["registrationRecord"]}
 
-    def test_registration_creates_unusable_password_and_requires_email_verification(self):
+    def test_registration_creates_unusable_password_and_starts_telegram_onboarding(self):
         password = "private password sent only to OPAQUE client"
         start = client_call("startRegistration", password=password)
-        response = self.post("register/start", {"username": "  Alice  ", "email": "ALICE@example.test", "registrationRequest": start["registrationRequest"]})
+        response = self.post("register/start", {"username": "  Alice  ", "registrationRequest": start["registrationRequest"]})
         self.assertEqual(response.status_code, 200)
         result = client_call("finishRegistration", password=password, clientRegistrationState=start["clientRegistrationState"], registrationResponse=response.json()["registrationResponse"], identifiers=identifiers("alice"), keyStretching="memory-constrained")
         finished = self.post("register/finish", {"challenge": response.json()["challenge"], "registrationRecord": result["registrationRecord"]})
         self.assertEqual(finished.status_code, 200)
-        self.assertEqual(finished.json(), {"verification_required": True, "verify_url": "/auth/verify-email/"})
+        self.assertEqual(finished.json()["next_step"], "telegram")
         user = get_user_model().objects.get(username="alice")
         self.assertFalse(user.has_usable_password())
-        self.assertFalse(user.is_active)
+        self.assertTrue(user.is_active)
         self.assertFalse(user.email_verified)
-        self.assertNotIn("_auth_user_id", self.client.session)
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertEqual(OpaqueCredential.objects.get(user=user).registration_record, result["registrationRecord"])
-        self.assertNotIn(password, json.dumps(list(OpaqueChallenge.objects.values("payload"))))
-        otp = re.search(r"\b\d{6}\b", mail.outbox[0].body).group()
-        self.assertEqual(self.client.post("/auth/verify-email/", {"code": otp}).status_code, 302)
-        user.refresh_from_db()
-        self.assertTrue(user.is_active and user.email_verified)
-        self.assertEqual(int(self.client.session["_auth_user_id"]), user.pk)
+        self.assertEqual(int(self.client.session['_auth_user_id']), user.pk)
+        self.assertEqual(user.email, '')
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(OpaqueCredential.objects.get(user=user).registration_record, result['registrationRecord'])
+        self.assertNotIn(password, json.dumps(list(OpaqueChallenge.objects.values('payload'))))
+        self.assertEqual(self.client.get('/api/cypher/files/').status_code, 403)
 
     def test_real_login_requires_final_proof_and_consumes_state(self):
         user = self.user()
@@ -140,7 +140,7 @@ class OpaqueAuthTests(TestCase):
         self.assertIn("server_login_state", stored.payload)
         self.assertNotIn("server_login_state", dict(self.client.session))
         response = self.post("login/finish", {"challenge": challenge, "finishLoginRequest": result["finishLoginRequest"]})
-        self.assertEqual(response.json(), {"ok": True})
+        self.assertEqual(response.json()["next_step"], "telegram")
         self.assertEqual(int(self.client.session["_auth_user_id"]), user.pk)
         self.assertIn("no-store", response["Cache-Control"])
         stored.refresh_from_db()
@@ -240,6 +240,7 @@ class OpaqueAuthTests(TestCase):
     def test_expired_recent_auth_and_regular_django_login_cannot_change_opaque(self):
         user = self.user()
         self.client.force_login(user)
+        onboarding_session(self.client, user)
         self.assertEqual(self.post("change/start", {"registrationRequest": "A" * 64}).status_code, 403)
         self.authenticated_client(user)
         session = self.client.session
@@ -251,7 +252,7 @@ class OpaqueAuthTests(TestCase):
 
     def test_registration_challenge_is_bound_and_record_must_parse(self):
         start = client_call("startRegistration", password="local client only")
-        response = self.post("register/start", {"username": "alice", "email": "alice@example.test", "registrationRequest": start["registrationRequest"]})
+        response = self.post("register/start", {"username": "alice", "registrationRequest": start["registrationRequest"]})
         challenge = response.json()["challenge"]
         self.assertEqual(self.post("register/finish", {"challenge": challenge, "registrationRecord": "A" * 192}, client=Client()).status_code, 401)
         self.assertEqual(self.post("register/finish", {"challenge": challenge, "registrationRecord": "A" * 192}).status_code, 400)
@@ -293,17 +294,15 @@ class OpaqueAuthTests(TestCase):
         call_command("cleanup_opaque_challenges", stdout=io.StringIO())
         self.assertFalse(OpaqueChallenge.objects.exists())
 
-    def test_email_login_resolves_canonical_opaque_identity(self):
-        user = self.user()
-        challenge, result = self.login_exchange(" ALICE@EXAMPLE.TEST ")
-        self.assertIsNotNone(result)
-        response = self.post("login/finish", {"challenge": challenge, "finishLoginRequest": result["finishLoginRequest"]})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(int(self.client.session["_auth_user_id"]), user.pk)
+    def test_email_login_is_rejected(self):
+        self.user()
+        response = self.post('login/start', {'username': 'alice@example.test', 'startLoginRequest': 'A' * 64})
+        self.assertEqual(response.status_code, 400)
 
     def test_verified_passkey_can_add_first_password_and_rewrap_current_vault(self):
         user = get_user_model().objects.create_user(username="alice", email="alice@example.test", password=None, email_verified=True)
         self.client.force_login(user)
+        onboarding_session(self.client, user)
         session = self.client.session
         session["passkey_recent_auth"] = {"user_id": user.pk, "authenticated_at": timezone.now().timestamp()}
         session.save()
@@ -319,9 +318,10 @@ class OpaqueAuthTests(TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(self.post("login/finish", {"challenge": challenge, "finishLoginRequest": result["finishLoginRequest"]}).status_code, 200)
 
-    def test_email_reset_marker_never_changes_password_while_vault_exists(self):
+    def test_telegram_reset_marker_never_changes_password_while_vault_exists(self):
         user = self.user()
         self.client.force_login(user)
+        onboarding_session(self.client, user)
         session = self.client.session
         session["passkey_recent_reset"] = {"user_id": user.pk, "authenticated_at": timezone.now().timestamp()}
         session.save()

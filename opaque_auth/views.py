@@ -8,9 +8,8 @@ from datetime import timedelta
 from functools import wraps
 
 from django.conf import settings
-from django.contrib.auth import get_user_model, login, update_session_auth_hash
+from django.contrib.auth import get_user_model, update_session_auth_hash
 from django.core.exceptions import ValidationError
-from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
@@ -18,8 +17,6 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.debug import sensitive_variables
 from django.views.decorators.http import require_POST
 
-from accounts.models import OneTimeCode
-from accounts.services import send_code
 from core.audit import allow_action, audit, client_ip
 from vaults.models import Vault
 from vaults.validation import envelope, uuid_value
@@ -85,14 +82,6 @@ def _login_identity(value):
     if not isinstance(value, str):
         raise ValueError("invalid_identifier")
     value = value.strip().lower()
-    if "@" in value:
-        if len(value) > 254:
-            raise ValueError("invalid_identifier")
-        validate_email(value)
-        user = User.objects.filter(email__iexact=value).first()
-        # OPAQUE's fake-record path must also have a stable, valid identifier.
-        username = user.username if user else "user-" + hashlib.sha256(value.encode()).hexdigest()[:32]
-        return value, username, user
     username = _username(value)
     return value, username, User.objects.filter(username=username).first()
 
@@ -148,7 +137,7 @@ def _consume(request, challenge_id, kind):
 
 
 def _available(user):
-    return user is not None and user.is_authenticated and user.is_active and user.email_verified and user.scheduled_deletion_at is None
+    return user is not None and user.is_authenticated and user.is_active and user.scheduled_deletion_at is None
 
 
 def _recent(request, user, version):
@@ -177,20 +166,14 @@ def _mark_recent(request, user, version):
 @sensitive_variables()
 def register_start(request):
     try:
-        payload = _body(request, {"username", "email", "registrationRequest"})
+        payload = _body(request, {"username", "registrationRequest"})
         username = _username(payload["username"])
-        if not isinstance(payload["email"], str):
-            raise ValueError("invalid_email")
-        email = User.objects.normalize_email(payload["email"].strip()).lower()
-        validate_email(email)
-        if len(email) > 254:
-            raise ValueError("invalid_email")
         registration_request = _message(payload["registrationRequest"])
     except (ValueError, TypeError, ValidationError):
         return _error("invalid_request")
     if not _rate(request, "register_start", username):
         return _error("rate_limited", 429)
-    if User.objects.filter(username__iexact=username).exists() or User.objects.filter(email__iexact=email).exists():
+    if User.objects.filter(username__iexact=username).exists():
         return _error("account_unavailable", 409)
     try:
         result = call_opaque("createRegistrationResponse", userIdentifier=username, registrationRequest=registration_request)
@@ -198,7 +181,7 @@ def register_start(request):
         return _error("opaque_unavailable", 503)
     except OpaqueError:
         return _error("invalid_request")
-    challenge = _issue(request, OpaqueChallenge.Kind.REGISTER, {"username": username, "email": email})
+    challenge = _issue(request, OpaqueChallenge.Kind.REGISTER, {"username": username})
     return JsonResponse({"challenge": str(challenge.pk), "username": username, "registrationResponse": result["registrationResponse"]})
 
 
@@ -213,7 +196,7 @@ def register_finish(request):
     if consumed is None:
         return _error("authentication_failed", 401)
     payload, _ = consumed
-    username, email = payload["username"], payload["email"]
+    username = payload["username"]
     if not _rate(request, "register_finish", username):
         return _error("rate_limited", 429)
     try:
@@ -225,20 +208,17 @@ def register_finish(request):
         return _error("invalid_request")
     try:
         with transaction.atomic():
-            if User.objects.filter(username__iexact=username).exists() or User.objects.filter(email__iexact=email).exists():
+            if User.objects.filter(username__iexact=username).exists():
                 return _error("account_unavailable", 409)
-            user = User.objects.create_user(username=username, email=email, password=None, is_active=False, email_verified=False, auth_mode=User.AuthMode.PASSWORD)
+            user = User.objects.create_user(username=username, password=None, is_active=True, auth_mode=User.AuthMode.PASSWORD)
             OpaqueCredential.objects.create(user=user, registration_record=record)
     except IntegrityError:
         return _error("account_unavailable", 409)
-    request.session["verify_user_id"] = user.pk
-    try:
-        send_code(user, OneTimeCode.Purpose.VERIFY_EMAIL)
-    except Exception:
-        audit(request, "opaque.verification_email_failed", success=False, actor=user)
-        return _error("verification_email_failed", 503)
+    from accounts.onboarding import begin, state
+    begin(request, user)
+    _mark_recent(request, user, 1)
     audit(request, "opaque.registration_started", actor=user)
-    return JsonResponse({"verification_required": True, "verify_url": "/auth/verify-email/"})
+    return JsonResponse({"ok": True, **state(user)})
 
 
 @opaque_endpoint
@@ -309,7 +289,8 @@ def login_finish(request):
             or not hmac.compare_digest(user.get_session_auth_hash(), payload["auth_hash"])
         ):
             return _error("authentication_failed", 401)
-        if getattr(settings, "LOGIN_SECOND_FACTOR_REQUIRED", True):
+        from otp_auth.models import TotpCredential
+        if TotpCredential.objects.filter(user=user).exists():
             from otp_auth.services import OTPRateLimited, OTPUnavailable, begin_login
 
             try:
@@ -319,10 +300,12 @@ def login_finish(request):
             except OTPRateLimited:
                 return _error("rate_limited", 429)
             return JsonResponse(pending_login)
-        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        from accounts.onboarding import begin
+        begin(request, user)
         _mark_recent(request, user, credential.version)
     audit(request, "opaque.login", actor=user)
-    return JsonResponse({"ok": True})
+    from accounts.onboarding import state
+    return JsonResponse({"ok": True, **state(user)})
 
 
 @opaque_endpoint
@@ -410,5 +393,6 @@ def change_finish(request):
         user.save(update_fields=["password"])
         update_session_auth_hash(request, user)
         _mark_recent(request, user, credential.version)
+        request.session.pop("password_setup_required", None)
     audit(request, "opaque.password_changed", actor=user)
     return JsonResponse({"ok": True})

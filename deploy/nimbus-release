@@ -1,0 +1,62 @@
+#!/bin/bash
+# Root-owned operator entry point. No repository code executes with root privileges.
+set -euo pipefail
+umask 022
+release_sha=${1:-}
+[[ $# == 1 && "$release_sha" =~ ^[a-f0-9]{40}$ ]] || { echo 'Expected one full commit SHA' >&2; exit 2; }
+[[ -f /etc/nimbus/runtime.env ]] || { echo 'Configure domain, Telegram and persistent secrets first' >&2; exit 1; }
+exec 9>/run/lock/nimbus-release.lock
+flock -w 600 9
+release_dir=/opt/nimbus/releases/$release_sha
+if [[ -e "$release_dir" ]]; then
+    echo 'Release directory already exists; inspect it before attempting a redeploy' >&2
+    exit 1
+fi
+install -d -o nimbus-build -g nimbus-build "$release_dir"
+runuser -u nimbus-build -- git clone --no-checkout https://github.com/wywywywycloud/cloud-nimbus-e2ee.git "$release_dir"
+runuser -u nimbus-build -- git -C "$release_dir" checkout --detach "$release_sha"
+# Do not run obsolete queued deployments after main has advanced.
+[[ "$(runuser -u nimbus-build -- git -C "$release_dir" rev-parse origin/main)" == "$release_sha" ]] || { echo 'Refusing a commit that is no longer main' >&2; exit 1; }
+# Fetch only the known client repository, using the exact pinned gitlink.
+client_sha=$(runuser -u nimbus-build -- git -C "$release_dir" rev-parse HEAD:cloud-cypher)
+[[ "$client_sha" =~ ^[a-f0-9]{40}$ ]]
+runuser -u nimbus-build -- git clone https://github.com/wywywywycloud/cloud-cypher.git "$release_dir/cloud-cypher"
+runuser -u nimbus-build -- git -C "$release_dir/cloud-cypher" checkout --detach "$client_sha"
+runuser -u nimbus-build -- python3 -m venv "$release_dir/.venv"
+runuser -u nimbus-build -- "$release_dir/.venv/bin/pip" install --disable-pip-version-check --no-cache-dir -r "$release_dir/deploy/requirements.txt"
+# No editable install required: Django runs from the complete checkout.
+install -d -o nimbus -g nimbus "$release_dir/staticfiles"
+chown -R root:root "$release_dir"
+chown nimbus:nimbus "$release_dir/staticfiles"
+set -a
+. /etc/nimbus/runtime.env
+set +a
+export PYTHONDONTWRITEBYTECODE=1
+cd "$release_dir"
+runuser -u nimbus --preserve-environment -- .venv/bin/python manage.py check --deploy --fail-level WARNING
+runuser -u nimbus --preserve-environment -- .venv/bin/python manage.py collectstatic --noinput
+chown -R root:root "$release_dir/staticfiles"
+# Persistent marker also prevents a reboot from starting code against a partial migration.
+[[ ! -e /etc/nimbus/maintenance ]] || { echo 'Existing maintenance requires operator review' >&2; exit 1; }
+trap 'touch /etc/nimbus/maintenance; systemctl stop nimbus-maintenance.timer nimbus-maintenance.service nimbus-telegram.service nimbus.service || true; echo "Deployment failed in maintenance; inspect migrations before restart" >&2' ERR
+touch /etc/nimbus/maintenance
+systemctl stop nimbus-maintenance.timer nimbus-maintenance.service nimbus-telegram.service nimbus.service
+# Never silently restore an older DB and resurrect revoked vaults.
+/usr/local/sbin/nimbus-backup-data
+runuser -u nimbus --preserve-environment -- .venv/bin/python manage.py migrate --noinput
+runuser -u nimbus --preserve-environment -- .venv/bin/python manage.py deployment_check
+switch_dir=$(mktemp -d /opt/nimbus/.switch.XXXXXXXX)
+trap 'rm -f -- "$switch_dir/next"; rmdir -- "$switch_dir"' EXIT
+ln -s "$release_dir" "$switch_dir/next"
+mv -Tf "$switch_dir/next" /opt/nimbus/current
+rm /etc/nimbus/maintenance
+systemctl start nimbus.service
+healthy=0
+for attempt in {1..30}; do
+    if curl --silent --fail --max-time 3 -H "Host: $PASSKEY_RP_ID:9443" -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/healthz/ >/dev/null; then healthy=1; break; fi
+    sleep 1
+done
+if [[ "$healthy" != 1 ]]; then false; fi
+systemctl start nimbus-telegram.service nimbus-maintenance.timer nimbus-backup.timer
+trap - ERR
+echo "Deployed backend $release_sha with client $client_sha"

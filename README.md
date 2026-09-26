@@ -8,13 +8,13 @@ Source repositories: [cloud-nimbus-e2ee backend](https://github.com/wywywywyclou
 
 ## Authentication and encryption
 
-Password authentication uses OPAQUE from the pinned `@serenity-kit/opaque` implementation. Django receives protocol messages rather than the password. An email code or enrolled TOTP factor confirms the password login before Django issues a session. The client's OPAQUE export key protects a randomly generated vault key; files use independent random AES-256-GCM keys through WebCrypto. Password changes atomically replace the OPAQUE record and rewrap the same vault key, preserving files.
+Registration uses a username and OPAQUE password, then requires Telegram verification, passkey/PRF activation and TOTP enrollment in that order. Django receives protocol messages rather than the password. An incomplete account receives only a restricted onboarding session. Subsequent password logins require a TOTP code before file access. Email verification and email authentication are disabled. The client's OPAQUE export key protects a randomly generated vault key; files use independent random AES-256-GCM keys through WebCrypto. Password changes atomically replace the OPAQUE record and rewrap the same vault key, preserving files.
 
-A working WebAuthn passkey/PRF prototype provides the alternative cryptographic login and another wrapper for the same vault key. A retained passkey can authorize setting a forgotten password while preserving files. Losing the passkey instead requires email confirmation and `DELETE ALL FILES`, which destroys all encrypted-vault files and starts a new empty vault. It does not restore old files or migrate/delete historical legacy plaintext.
+A working WebAuthn passkey/PRF prototype provides the alternative cryptographic login and another wrapper for the same vault key. A retained passkey can authorize setting a forgotten password while preserving files. Destructive reset instead requires a code sent to the previously linked Telegram account and `DELETE ALL FILES`: it destroys encrypted-vault files, revokes credentials and sessions, and requires a new password, passkey and TOTP. It does not restore old files or migrate/delete historical legacy plaintext.
 
-TOTP replaces the email code as an additional factor for password login; it is not a standalone decryption key. Its shared seed is known to the backend. No separate recovery-code workflow is used. Losing both the password and every available passkey copy cannot be repaired into access to old files using email/TOTP alone.
+TOTP is a mandatory additional factor for password login; it is not a standalone decryption key. Its shared seed is known to the backend. Telegram verification also does not create a file key. No separate recovery-code workflow is used. Losing both the password and every available passkey copy cannot be repaired into access to old files using Telegram/TOTP alone.
 
-The prototype requires signed backup eligibility and backup-state flags (`BE=1`, `BS=1`) before activating a passkey or permitting upload. These authenticator claims do not independently prove provider synchronization across physical devices; that behavior has not been tested. Telegram is disabled by default. Encrypted sharing, folders and server-side plaintext previews are not supported by the new API.
+The prototype requires signed backup eligibility and backup-state flags (`BE=1`, `BS=1`) before activating a passkey or permitting upload. These authenticator claims do not independently prove provider synchronization across physical devices; that behavior has not been tested. Upload also requires verified Telegram, enrolled TOTP and a fully authenticated session. Encrypted sharing, folders and server-side plaintext previews are not supported by the new API.
 
 ## Run locally
 
@@ -28,7 +28,7 @@ python3 -m venv .venv
 .venv/bin/python manage.py runserver 127.0.0.1:8017
 ```
 
-Open `http://localhost:8017/vault/`. Without SMTP configuration, verification emails go to the development console. OPAQUE operations require `OPAQUE_SERVER_SETUP`; do not regenerate this setup for an existing database. `PASSKEY_REQUIRED=1` gates upload until an active passkey wrapper exists for the current vault. `LOGIN_SECOND_FACTOR_REQUIRED=1` requires email/TOTP after the OPAQUE proof.
+Open `http://localhost:8017/vault/`. Interactive onboarding requires the configured Telegram bot and one polling worker; the isolated test stand mocks Telegram without sending real messages. SMTP is not required. OPAQUE operations require `OPAQUE_SERVER_SETUP`; do not regenerate this setup for an existing database. Factor requirements cannot be bypassed by disabling a legacy feature flag.
 
 ## Validation
 
@@ -51,15 +51,16 @@ Ciphertext cannot be scanned by the server as plaintext and is never presented a
 - [INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md): protocols, data model, API, storage and limitations.
 - [OPERATIONS.md](docs/OPERATIONS.md): setup, secrets, tests, cleanup and restore.
 - [DECISIONS.md](docs/DECISIONS.md): current decisions and explicitly separated legacy history.
+- [DEPLOYMENT.md](docs/DEPLOYMENT.md): prepared CI/CD, server configuration and outstanding deployment checks.
 - `vaults/`: encrypted objects, shared quota accounting, generation fencing and deletion outbox.
 - `opaque_auth/`: OPAQUE state, server bridge and password changes.
 - `passkeys/`: WebAuthn/PRF prototype and destructive encrypted-vault reset.
-- `otp_auth/`: email/TOTP confirmation of password login.
+- `otp_auth/`: mandatory TOTP confirmation of password login.
 - `cloud-cypher/`: separately licensed client and delivery verifier.
 - `accounts/`, `drive/`, `sharing/`: account lifecycle and legacy plaintext features. Their presence does not imply E2EE support.
 - `services/storage-gateway/`: separately prepared Go data plane, not connected to Django.
 
-The quota is 50 MiB and includes ciphertext tags plus any legacy-file usage. SQLite and private local storage are development defaults. Production still requires PostgreSQL, TLS, SMTP, secret management, scheduling, backup/restore, validated recovery behavior and independent security review.
+The quota is 50 MiB and includes ciphertext tags plus any legacy-file usage. SQLite and private local storage are development defaults. Deployment configuration targets PostgreSQL, TLS on `nimbus.by:9443`, a Telegram polling worker and private local ciphertext storage. It remains to validate the actual server, CI, backup/restore and real authenticators; prepared configuration is not a completed production deployment.
 
 ## License
 

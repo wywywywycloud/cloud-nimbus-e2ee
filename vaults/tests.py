@@ -16,6 +16,8 @@ from django.utils import timezone
 
 from drive.models import StoredFile
 
+from accounts.test_support import factors, onboarding_session
+
 from .models import BlobDeletion, CipherFile, Vault
 
 
@@ -41,9 +43,17 @@ class VaultAPITests(TestCase):
         self.other_client = Client()
         self.other_client.force_login(self.other)
         self.vault_id = str(uuid.uuid4())
+        for user, client in [(self.user, self.client), (self.other, self.other_client)]:
+            factors(user)
+            onboarding_session(client, user)
 
     def create_vault(self, *, vault_id=None, client=None):
-        return (client or self.client).post("/api/cypher/vault/", {"id": vault_id or self.vault_id, "version": 1, "wrapped_key": encrypted(48)}, content_type="application/json")
+        response = (client or self.client).post("/api/cypher/vault/", {"id": vault_id or self.vault_id, "version": 1, "wrapped_key": encrypted(48)}, content_type="application/json")
+
+        if response.status_code == 201:
+            vault = Vault.objects.get(pk=response.json()['vault']['id'])
+            factors(vault.owner, vault=vault)
+        return response
 
     def upload(self, *, data=b"opaque ciphertext" * 2, metadata=None, file_id=None, vault_id=None, client=None):
         with self.captureOnCommitCallbacks(execute=True):
@@ -69,11 +79,12 @@ class VaultAPITests(TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"], "authentication_required")
 
-    def test_state_changes_require_csrf_and_work_without_telegram(self):
+    def test_state_changes_require_csrf_after_telegram(self):
         client = Client(enforce_csrf_checks=True)
         client.force_login(self.user)
         payload = {"id": self.vault_id, "version": 1, "wrapped_key": encrypted(48)}
-        self.assertIsNone(self.user.telegram_user_id)
+        self.assertIsNotNone(self.user.telegram_user_id)
+        onboarding_session(client, self.user)
         self.assertEqual(client.post("/api/cypher/vault/", payload, content_type="application/json").status_code, 403)
         token = client.get("/api/cypher/session/").json()["csrf_token"]
         self.assertEqual(client.post("/api/cypher/vault/", payload, content_type="application/json", HTTP_X_CSRFTOKEN=token).status_code, 201)
@@ -86,7 +97,7 @@ class VaultAPITests(TestCase):
         self.assertEqual(response.json()["vault"], {"id": self.vault_id, "version": 1, "wrapped_key": encrypted(48)})
         session = self.client.get("/api/cypher/session/").json()
         self.assertTrue(session["authenticated"])
-        self.assertEqual(session["user"], {"username": "owner", "email": "owner@example.test"})
+        self.assertEqual(session["user"], {"username": "owner"})
         self.assertEqual(session["quota_bytes"], 50 * 1024 * 1024)
         self.assertEqual(session["vault"], response.json()["vault"])
         self.assertEqual(self.create_vault(vault_id=str(uuid.uuid4())).status_code, 409)
@@ -123,6 +134,8 @@ class VaultAPITests(TestCase):
         self.assertIn("no-store", download["Cache-Control"])
         self.assertEqual(download["Content-Type"], "application/octet-stream")
         self.assertEqual(download["X-Content-Type-Options"], "nosniff")
+        other_vault = Vault.objects.create(owner=self.other, wrapped_key=encrypted(48))
+        factors(self.other, vault=other_vault)
         self.assertEqual(self.other_client.get("/api/cypher/files/").json(), {"files": []})
         self.assertEqual(self.other_client.get(f"/api/cypher/files/{item.pk}/download/").status_code, 404)
         self.assertEqual(self.other_client.delete(f"/api/cypher/files/{item.pk}/").status_code, 404)
@@ -206,8 +219,8 @@ class VaultAPITests(TestCase):
         vault = Vault.objects.get(pk=self.vault_id)
         self.assertIsNotNone(vault.revoked_at)
         self.assertEqual(vault.wrapped_key, {})
-        self.assertEqual(self.client.get(f"/api/cypher/files/{item_id}/download/").status_code, 404)
-        self.assertEqual(self.upload().status_code, 409)
+        self.assertEqual(self.client.get(f"/api/cypher/files/{item_id}/download/").status_code, 403)
+        self.assertEqual(self.upload().status_code, 403)
         self.assertEqual(self.create_vault().status_code, 409)
         self.assertEqual(self.create_vault(vault_id=str(uuid.uuid4())).status_code, 201)
         self.user.refresh_from_db()
@@ -261,6 +274,9 @@ class VaultAPITests(TestCase):
         self.assertFalse(BlobDeletion.objects.exists())
         self.assertFalse(list(Path(self.media.name).rglob("*.bin")))
         self.vault_id = str(uuid.uuid4())
+        for user, client in [(self.user, self.client), (self.other, self.other_client)]:
+            factors(user)
+            onboarding_session(client, user)
         self.create_vault()
         self.upload()
         with self.captureOnCommitCallbacks(execute=True):

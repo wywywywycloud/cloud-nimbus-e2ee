@@ -1,0 +1,26 @@
+[Unit]
+Description=Cloud Nimbus durable cleanup
+After=postgresql.service
+ConditionPathExists=/opt/nimbus/current
+
+ConditionPathExists=!/etc/nimbus/maintenance
+
+[Service]
+Type=oneshot
+User=nimbus
+Group=nimbus
+WorkingDirectory=/opt/nimbus/current
+EnvironmentFile=/etc/nimbus/runtime.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/nimbus/current/.venv/bin/python manage.py cleanup_cipher_blobs
+ExecStart=/opt/nimbus/current/.venv/bin/python manage.py cleanup_opaque_challenges
+ExecStart=/opt/nimbus/current/.venv/bin/python manage.py cleanup_otp_challenges
+ExecStart=/opt/nimbus/current/.venv/bin/python manage.py cleanup_rate_buckets
+ExecStart=/opt/nimbus/current/.venv/bin/python manage.py purge_deleted_accounts
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nimbus
+MemoryMax=200M

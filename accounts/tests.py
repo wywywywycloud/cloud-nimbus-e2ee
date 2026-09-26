@@ -10,6 +10,9 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from accounts.test_support import factors, onboarding_session
+from vaults.models import Vault
+
 from .models import OneTimeCode, TelegramLinkAttempt
 from .telegram import handle_update
 
@@ -20,108 +23,15 @@ def code_from_last_email():
     return re.search(r"\b(\d{6})\b", mail.outbox[-1].body).group(1)
 
 
-@override_settings(OPAQUE_ENABLED=False)
-class RegistrationTests(TestCase):
-    def test_registration_requires_email_code(self):
-        response = self.client.post(reverse("accounts:register"), {
-            "username": "mikhail",
-            "email": "mikhail@example.com",
-            "password1": "Cloudy-Pebble-827!",
-            "password2": "Cloudy-Pebble-827!",
-        })
-        self.assertRedirects(response, reverse("accounts:verify_email"))
-        user = User.objects.get(username="mikhail")
-        self.assertFalse(user.email_verified)
-        self.assertEqual(user.auth_mode, User.AuthMode.CODE)
-        self.assertEqual(user.quota_bytes, settings.TELEGRAM_VERIFIED_QUOTA_BYTES)
-        self.assertEqual(len(mail.outbox), 1)
-
-        response = self.client.post(reverse("accounts:verify_email"), {"code": code_from_last_email()})
-        self.assertRedirects(response, reverse("accounts:settings"))
-        user.refresh_from_db()
-        self.assertTrue(user.email_verified)
-        self.assertEqual(int(self.client.session["_auth_user_id"]), user.pk)
-
-    def test_code_is_single_use(self):
-        user = User.objects.create_user(username="cloud", email="cloud@example.com", password="Long-passphrase-778!", email_verified=True)
-        otp = OneTimeCode.issue(user, OneTimeCode.Purpose.LOGIN, "123456")
-        self.assertTrue(otp.verify("123456"))
-        self.assertFalse(otp.verify("123456"))
-
-
-@override_settings(NIMBUS_LEGACY_WRITES_ENABLED=True, OPAQUE_ENABLED=False)
-class LoginModeTests(TestCase):
-    def setUp(self):
-        self.user = User.objects.create_user(username="nimbus", email="nimbus@example.com", password="Long-passphrase-778!", email_verified=True)
-
-    def test_default_code_login(self):
-        response = self.client.post(reverse("accounts:login"), {"identifier": self.user.email})
-        self.assertRedirects(response, reverse("accounts:verify_login"))
-        response = self.client.post(reverse("accounts:verify_login"), {"code": code_from_last_email()})
-        self.assertRedirects(response, reverse("drive:home"))
-
-    def test_password_only_login(self):
-        self.user.auth_mode = User.AuthMode.PASSWORD
-        self.user.save(update_fields=["auth_mode"])
-        response = self.client.post(reverse("accounts:login"), {"identifier": "nimbus", "password": "Long-passphrase-778!"})
-        self.assertRedirects(response, reverse("drive:home"))
-        self.assertEqual(len(mail.outbox), 0)
-
-    def test_password_mode_discovery_is_a_clean_first_step(self):
-        self.user.auth_mode = User.AuthMode.PASSWORD
-        self.user.save(update_fields=["auth_mode"])
-        response = self.client.post(reverse("accounts:login"), {"identifier": "nimbus"})
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'name="password_step" value="1"', html=False)
-        self.assertContains(response, 'value="nimbus"', html=False)
-        self.assertNotContains(response, "Обязательное поле")
-        self.assertNotIn("_auth_user_id", self.client.session)
-
-    def test_code_and_password_login(self):
-        self.user.auth_mode = User.AuthMode.CODE_PASSWORD
-        self.user.save(update_fields=["auth_mode"])
-        response = self.client.post(reverse("accounts:login"), {"identifier": "nimbus", "password": "Long-passphrase-778!"})
-        self.assertRedirects(response, reverse("accounts:verify_login"))
-        self.assertNotIn("_auth_user_id", self.client.session)
-        response = self.client.post(reverse("accounts:verify_login"), {"code": code_from_last_email()})
-        self.assertRedirects(response, reverse("drive:home"))
-
-    def test_admin_uses_the_users_configured_login_flow(self):
-        self.user.is_staff = True
-        self.user.auth_mode = User.AuthMode.CODE
-        self.user.save(update_fields=["is_staff", "auth_mode"])
-        response = self.client.get("/admin/login/?next=/admin/")
-        self.assertRedirects(response, f"{reverse('accounts:login')}?next=/admin/", fetch_redirect_response=False)
-        self.client.get(response.url)
-        self.client.post(reverse("accounts:login"), {"identifier": self.user.email})
-        response = self.client.post(reverse("accounts:verify_login"), {"code": code_from_last_email()})
-        self.assertRedirects(response, "/admin/", fetch_redirect_response=False)
-
-    def test_username_reminder_response_is_neutral(self):
-        response = self.client.post(reverse("accounts:remind_username"), {"email": "missing@example.com"}, follow=True)
-        self.assertContains(response, "Если аккаунт существует")
-        self.assertEqual(len(mail.outbox), 0)
-
-    def test_account_deletion_can_be_recovered_within_grace_period(self):
-        self.client.force_login(self.user)
-        response = self.client.post(reverse("accounts:delete_account"), {"username": "nimbus", "password": "Long-passphrase-778!"})
-        self.assertRedirects(response, reverse("accounts:login"))
-        self.user.refresh_from_db()
-        self.assertFalse(self.user.is_active)
-        self.assertIsNotNone(self.user.scheduled_deletion_at)
-        recovery_url = re.search(r"https?://[^\s]+", mail.outbox[-1].body).group(0)
-        recovery_path = recovery_url.split("testserver", 1)[-1]
-        page = self.client.get(recovery_path)
-        self.assertContains(page, "Восстановить аккаунт")
-        self.client.post(recovery_path)
-        self.user.refresh_from_db()
-        self.assertTrue(self.user.is_active)
-        self.assertIsNone(self.user.scheduled_deletion_at)
-
-    def test_password_reset_only_emails_verified_active_user(self):
-        response = self.client.post(reverse("accounts:password_reset"), {"email": self.user.email})
-        self.assertRedirects(response, reverse("accounts:password_reset_done"))
-        self.assertEqual(len(mail.outbox), 1)
+class LegacyAuthDisabledTests(TestCase):
+    def test_email_and_legacy_paths_cannot_authenticate_even_with_legacy_flags(self):
+        with override_settings(OPAQUE_ENABLED=False, NIMBUS_LEGACY_WRITES_ENABLED=True):
+            for path in ('register/', 'login/', 'login/code/', 'login/code/resend/', 'verify-email/', 'verify-email/resend/', 'remind-username/', 'password-reset/', 'recover-account/a/b/'):
+                with self.subTest(path=path):
+                    response = self.client.post('/auth/' + path, {'email': 'user@example.test', 'password': 'secret', 'code': '123456'})
+                    self.assertEqual(response.status_code, 410)
+                    self.assertNotIn('_auth_user_id', self.client.session)
+            self.assertEqual(len(mail.outbox), 0)
 
 
 @override_settings(NIMBUS_LEGACY_WRITES_ENABLED=True, OPAQUE_ENABLED=False)
@@ -133,7 +43,9 @@ class UserPreferencesTests(TestCase):
             password="Long-passphrase-778!",
             email_verified=True,
         )
+        factors(self.user, vault=Vault.objects.create(owner=self.user, wrapped_key={}))
         self.client.force_login(self.user)
+        onboarding_session(self.client, self.user)
 
     def test_defaults_are_dark_and_russian(self):
         self.assertEqual(self.user.ui_theme, User.UITheme.DARK)
@@ -162,26 +74,9 @@ class UserPreferencesTests(TestCase):
         self.assertEqual(self.client.session["django_language"], "ar")
         self.assertEqual(self.client.session["ui_theme"], "light")
 
-    def test_security_form_still_requires_correct_current_password(self):
-        url = reverse("accounts:settings")
-        response = self.client.post(url, {
-            "action": "auth_mode",
-            "auth_mode": User.AuthMode.PASSWORD,
-            "current_password": "wrong-password",
-        })
-        self.assertEqual(response.status_code, 200)
-        self.user.refresh_from_db()
-        self.assertEqual(self.user.auth_mode, User.AuthMode.CODE)
-        self.assertContains(response, "Неверный пароль")
-
-        response = self.client.post(url, {
-            "action": "auth_mode",
-            "auth_mode": User.AuthMode.PASSWORD,
-            "current_password": "Long-passphrase-778!",
-        })
-        self.assertRedirects(response, url)
-        self.user.refresh_from_db()
-        self.assertEqual(self.user.auth_mode, User.AuthMode.PASSWORD)
+    def test_security_form_cannot_enable_legacy_login(self):
+        response = self.client.post(reverse('accounts:settings'), {'action': 'auth_mode', 'auth_mode': User.AuthMode.CODE, 'current_password': 'Long-passphrase-778!'})
+        self.assertEqual(response.status_code, 410)
 
     def test_authenticated_preferences_set_html_language_direction_and_theme(self):
         self.user.language = "ur"
@@ -198,7 +93,7 @@ class UserPreferencesTests(TestCase):
         session["ui_theme"] = "light"
         session.save()
         response = self.client.get(reverse("accounts:login"))
-        self.assertContains(response, '<html lang="ar" dir="rtl" data-theme="light"', html=False)
+        self.assertRedirects(response, "/vault/", fetch_redirect_response=False)
 
     def test_settings_are_split_into_independent_sections(self):
         account = self.client.get(reverse("accounts:settings"))
@@ -244,6 +139,7 @@ class TelegramLinkTests(TestCase):
             quota_bytes=settings.TELEGRAM_VERIFIED_QUOTA_BYTES,
         )
         self.client.force_login(self.user)
+        onboarding_session(self.client, self.user)
 
     def issue_attempt(self, token="safe_token-123"):
         return TelegramLinkAttempt.objects.create(
@@ -255,8 +151,8 @@ class TelegramLinkTests(TestCase):
     @override_settings(TELEGRAM_BOT_TOKEN="bot-token", TELEGRAM_BOT_USERNAME="nimbus_test_bot")
     def test_link_view_creates_one_time_deep_link(self):
         response = self.client.post(reverse("accounts:telegram_link"))
-        self.assertEqual(response.status_code, 302)
-        parsed = urlparse(response.url)
+        self.assertEqual(response.status_code, 200)
+        parsed = urlparse(response.json()["url"])
         token = parse_qs(parsed.query)["start"][0]
         self.assertEqual(parsed.netloc, "t.me")
         self.assertEqual(parsed.path, "/nimbus_test_bot")
@@ -300,7 +196,7 @@ class TelegramLinkTests(TestCase):
         self.assertIsNotNone(attempt.used_at)
 
     @patch("accounts.telegram.send_message")
-    def test_existing_user_can_rebind_to_another_telegram(self, send_message):
+    def test_existing_user_cannot_rebind_to_another_telegram(self, send_message):
         self.user.telegram_user_id = 7001
         self.user.quota_bytes = settings.TELEGRAM_VERIFIED_QUOTA_BYTES
         self.user.save(update_fields=["telegram_user_id", "quota_bytes"])
@@ -309,9 +205,9 @@ class TelegramLinkTests(TestCase):
         attempt.telegram_sender_id = 7002
         attempt.save(update_fields=["telegram_chat_id", "telegram_sender_id"])
         update = {"message": {"chat": {"id": 502, "type": "private"}, "from": {"id": 7002, "first_name": "New"}, "contact": {"user_id": 7002, "phone_number": "+70000000000"}}}
-        self.assertTrue(handle_update(update))
+        self.assertFalse(handle_update(update))
         self.user.refresh_from_db()
-        self.assertEqual(self.user.telegram_user_id, 7002)
+        self.assertEqual(self.user.telegram_user_id, 7001)
         self.assertEqual(self.user.quota_bytes, settings.TELEGRAM_VERIFIED_QUOTA_BYTES)
 
     @override_settings(TELEGRAM_WEBHOOK_SECRET="webhook-secret")

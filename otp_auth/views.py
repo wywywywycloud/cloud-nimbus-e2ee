@@ -7,7 +7,7 @@ from functools import wraps
 
 import pyotp
 from django.conf import settings
-from django.contrib.auth import get_user_model, login
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.http import JsonResponse
 from django.utils import timezone
@@ -19,7 +19,7 @@ from core.audit import audit
 from opaque_auth.models import OpaqueCredential
 
 from .models import OtpChallenge, TotpCredential
-from .services import code_digest, matching_counter, rate, session_digest
+from .services import matching_counter, rate, session_digest
 
 User = get_user_model()
 
@@ -56,7 +56,15 @@ def _body(request, required):
 
 
 def _available(user):
-    return user is not None and user.is_authenticated and user.is_active and user.email_verified and user.scheduled_deletion_at is None
+    return user is not None and user.is_authenticated and user.is_active and user.scheduled_deletion_at is None
+
+
+def _enrollable(user):
+    from accounts.onboarding import state
+    if not _available(user):
+        return False
+    gates = state(user)
+    return gates['telegram_ready'] and gates['passkey_ready']
 
 
 def _recent(request, user):
@@ -96,32 +104,32 @@ def _parse_proof(request):
 @sensitive_variables()
 def setup_start(request):
     _body(request, set())
-    if not _available(request.user) or not _recent(request, request.user):
+    if not _enrollable(request.user) or not _recent(request, request.user):
         return _error()
     if not rate(request, "setup", request.user.pk, limit=5):
         return _error("rate_limited", 429)
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=request.user.pk)
-        if not _available(user) or not _recent(request, user):
+        if not _enrollable(user) or not _recent(request, user):
             return _error()
         if TotpCredential.objects.filter(user=user).exists():
             return _error("totp_already_enabled", 409)
         OtpChallenge.objects.filter(user=user, kind="setup", consumed_at__isnull=True).update(consumed_at=timezone.now(), payload={})
         secret = pyotp.random_base32()
         challenge = OtpChallenge.objects.create(user=user, kind="setup", method="totp", session_digest=session_digest(request, create=True), payload={"secret": secret, "auth_hash": user.get_session_auth_hash()}, expires_at=timezone.now() + timedelta(minutes=5))
-    return JsonResponse({"challenge": str(challenge.pk), "secret": secret, "otpauth_uri": pyotp.TOTP(secret, digits=6, interval=30).provisioning_uri(name=user.email, issuer_name="cloud.nimbus")})
+    return JsonResponse({"challenge": str(challenge.pk), "secret": secret, "otpauth_uri": pyotp.TOTP(secret, digits=6, interval=30).provisioning_uri(name=user.username, issuer_name="cloud.nimbus")})
 
 
 @endpoint
 @sensitive_variables()
 def setup_finish(request):
     identifier, code = _parse_proof(request)
-    if not _available(request.user) or not _recent(request, request.user):
+    if not _enrollable(request.user) or not _recent(request, request.user):
         return _error()
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=request.user.pk)
         challenge = OtpChallenge.objects.select_for_update().filter(pk=identifier, user=user, kind="setup").first()
-        if not _available(user) or not _recent(request, user) or not _usable(challenge, session_digest(request)) or not hmac.compare_digest(challenge.payload["auth_hash"], user.get_session_auth_hash()):
+        if not _enrollable(user) or not _recent(request, user) or not _usable(challenge, session_digest(request)) or not hmac.compare_digest(challenge.payload["auth_hash"], user.get_session_auth_hash()):
             return _error()
         if TotpCredential.objects.filter(user=user).exists():
             return _error("totp_already_enabled", 409)
@@ -133,6 +141,7 @@ def setup_finish(request):
         TotpCredential.objects.create(user=user, secret=secret, last_counter=counter)
         # Email challenges issued before enrollment must not bypass this factor.
         OtpChallenge.objects.filter(user=user, kind="login", consumed_at__isnull=True).update(consumed_at=timezone.now(), payload={})
+    request.session["nimbus_access"] = user.pk
     audit(request, "otp.totp_enabled", actor=user)
     return JsonResponse({"ok": True})
 
@@ -160,10 +169,6 @@ def login_finish(request):
                 return _error()
             counter = matching_counter(totp.secret, code, after=totp.last_counter)
             successful = counter is not None
-        elif challenge.method == "email":
-            if totp is not None:
-                return _error()
-            successful = hmac.compare_digest(payload["code_digest"], code_digest(identifier, code))
         else:
             return _error()
         _attempt(challenge, successful)
@@ -172,7 +177,8 @@ def login_finish(request):
         if totp is not None:
             totp.last_counter = counter
             totp.save(update_fields=["last_counter"])
-        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        from accounts.onboarding import begin
+        begin(request, user, full=True)
         request.session["opaque_recent_auth"] = {"user_id": user.pk, "credential_version": credential.version, "authenticated_at": timezone.now().timestamp()}
     audit(request, "opaque.login_with_otp", actor=user, mode=challenge.method)
     return JsonResponse({"username": user.username})

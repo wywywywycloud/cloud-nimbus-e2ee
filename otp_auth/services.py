@@ -6,11 +6,10 @@ from datetime import timedelta
 
 import pyotp
 from django.conf import settings
-from django.core.mail import send_mail
 from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 
-from core.audit import allow_action, audit, client_ip
+from core.audit import allow_action, client_ip
 
 from .models import OtpChallenge, TotpCredential
 
@@ -64,25 +63,15 @@ def begin_login(request, user, credential):
     if not rate(request, "login_start", user.pk):
         raise OTPRateLimited()
     totp = TotpCredential.objects.filter(user=user).first()
-    method = "totp" if totp else "email"
+    if totp is None:
+        raise OTPUnavailable()
+    method = "totp"
     identifier = uuid.uuid4()
-    code = f"{secrets.randbelow(1000000):06d}" if method == "email" else None
     payload = {
         "credential_id": credential.pk,
         "credential_version": credential.version,
         "auth_hash": user.get_session_auth_hash(),
         "totp_id": totp.pk if totp else None,
     }
-    if code is not None:
-        payload["code_digest"] = code_digest(identifier, code)
     challenge = OtpChallenge.objects.create(id=identifier, user=user, kind="login", method=method, session_digest=session_digest(request, create=True), payload=payload, expires_at=timezone.now() + timedelta(minutes=5))
-    if code is not None:
-        try:
-            send_mail("cloud.nimbus: код входа", f"Код входа: {code}\n\nКод действует 5 минут. Если вы не входили в аккаунт, никому не сообщайте этот код.", settings.DEFAULT_FROM_EMAIL, [user.email])
-        except Exception as exc:
-            challenge.consumed_at = timezone.now()
-            challenge.payload = {}
-            challenge.save(update_fields=["consumed_at", "payload"])
-            audit(request, "otp.email_delivery_failed", success=False, actor=user)
-            raise OTPUnavailable() from exc
     return {"second_factor_required": True, "challenge": str(challenge.pk), "method": method}

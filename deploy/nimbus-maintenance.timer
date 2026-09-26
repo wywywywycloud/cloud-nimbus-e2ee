@@ -1,0 +1,8 @@
+[Unit]
+Description=Clean expired challenges and orphan ciphertext every ten minutes
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+Persistent=true
+[Install]
+WantedBy=timers.target
