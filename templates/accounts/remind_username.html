@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Напомнить логин — cloud.nimbus{% endblock %}
+{% block content %}
+<section class="auth-card compact-card">
+  <a class="auth-brand" href="{% url 'accounts:login' %}"><img src="{% static 'img/cloud-nimbus-logo.png' %}" alt=""><span>cloud.nimbus</span></a>
+  <div class="auth-copy"><h1>Напомнить логин</h1><p>Отправим логин на почту, если она привязана к аккаунту.</p></div>
+  <form method="post" class="stack-form">{% include 'accounts/_form.html' %}<button class="primary-button" type="submit">Отправить</button></form>
+  <div class="auth-links one"><a href="{% url 'accounts:login' %}">Вернуться ко входу</a></div>
+</section>
+{% endblock %}

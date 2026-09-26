@@ -1,0 +1,10 @@
+{% csrf_token %}
+{% if form.non_field_errors %}<div class="form-error">{{ form.non_field_errors|striptags }}</div>{% endif %}
+{% for field in form %}
+  <label class="field">
+    <span{% if field.name == 'username_or_email' %} data-i18n="username_or_email"{% elif field.name == 'username' %} data-i18n="username"{% elif field.name == 'email' %} data-i18n="email"{% elif field.name == 'password2' or field.name == 'new_password2' %} data-i18n="repeat_password"{% elif 'password' in field.name %} data-i18n="password"{% elif field.name == 'code' %} data-i18n="verification_code"{% endif %}>{{ field.label }}</span>
+    {{ field }}
+    {% if field.help_text %}<small>{{ field.help_text|safe }}</small>{% endif %}
+    {% for error in field.errors %}<em>{{ error }}</em>{% endfor %}
+  </label>
+{% endfor %}

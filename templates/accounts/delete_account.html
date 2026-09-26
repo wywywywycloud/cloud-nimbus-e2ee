@@ -1,0 +1,7 @@
+{% extends 'base.html' %}
+{% block title %}Удаление аккаунта — cloud.nimbus{% endblock %}
+{% block mobile_title %}Удаление аккаунта{% endblock %}
+{% block content %}
+<header class="page-header"><div><span class="eyebrow">Опасная зона</span><h1 data-i18n="delete_account">Удаление аккаунта</h1></div><a class="secondary-button" href="{% url 'accounts:settings' %}">Назад к настройкам</a></header>
+<section class="settings-grid one-column"><article class="settings-card danger-card"><h2>Аккаунт будет заблокирован сразу</h2><p>Через 30 дней файлы, ссылки и профиль будут удалены безвозвратно. До этого срока удаление можно отменить по ссылке из письма.</p><form method="post" class="stack-form">{% include 'accounts/_form.html' %}<button class="danger-button" type="submit">Удалить через 30 дней</button></form></article></section>
+{% endblock %}

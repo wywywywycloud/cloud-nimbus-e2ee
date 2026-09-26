@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Доступные мне — cloud.nimbus{% endblock %}
+{% block content %}
+<header class="drive-header shared-list-header">
+  <div><span class="eyebrow">Общий доступ</span><h1>Доступные мне</h1></div>
+  <p>Файлы и папки, которыми с вами поделились.</p>
+</header>
+<section class="file-surface shared-list-surface">
+  {% if items %}
+    <div class="file-table" role="table" aria-label="Доступные мне файлы и папки">
+      <div class="file-row shared-list-row file-head" role="row"><span>Название</span><span>Владелец</span><span>Доступ</span><span></span></div>
+      {% for item in items %}
+        <div class="file-row shared-list-row" role="row">
+          <a class="file-name" href="{{ item.url }}"><span class="file-icon{% if item.kind == 'folder' %} folder-icon{% endif %}"><img src="{% if item.kind == 'folder' %}{% static 'icons/adwaita/folder.png' %}{% else %}{% static 'icons/adwaita/file-generic.png' %}{% endif %}" alt=""{% if item.kind != 'folder' %} class="mime-icon"{% endif %}></span><span><strong>{{ item.name }}</strong><small>{% if item.kind == 'folder' %}Папка{% else %}Файл{% endif %}</small></span></a>
+          <span class="shared-owner"><strong>{{ item.owner.username }}</strong><small>{{ item.owner.email }}</small></span>
+          <span class="file-date">{{ item.role }}</span>
+          <a class="secondary-button compact-button" href="{{ item.url }}">Открыть</a>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state"><span class="empty-cloud adwaita-icon icon-shared" aria-hidden="true"></span><h2>Пока ничего нет</h2><p>Здесь появятся файлы и папки после приглашения.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

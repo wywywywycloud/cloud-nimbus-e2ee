@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% block title %}Общий доступ — cloud.nimbus{% endblock %}
+{% block content %}
+<header class="page-header">
+  <div><span class="eyebrow">Общий доступ</span><h1>{{ file.display_name }}</h1></div>
+  <a class="secondary-button" href="{% url 'drive:home' %}">Назад к файлам</a>
+</header>
+<section class="settings-grid">
+  <article class="settings-card">
+    <div class="settings-card-title"><span class="settings-icon">↗</span><div><h2>Новая ссылка</h2><p>Выберите, кто сможет скачать файл.</p></div></div>
+    <form class="stack-form" method="post" action="{% url 'sharing:create' file.pk %}">
+      {% csrf_token %}
+      <label class="field"><span>{{ create_form.access_mode.label }}</span>{{ create_form.access_mode }}</label>
+      <label class="field"><span>{{ create_form.password.label }}</span>{{ create_form.password }}<small>Нужен только для режима с паролем, минимум 8 символов.</small></label>
+      <label class="field"><span>{{ create_form.expires_at.label }}</span>{{ create_form.expires_at }}</label>
+      <button class="primary-button fit" type="submit">Создать ссылку</button>
+    </form>
+  </article>
+  <article class="settings-card identity-card">
+    <h2>Активные ссылки</h2>
+    <p>Отзыв немедленно закрывает ссылку и все подтверждённые сессии.</p>
+    <form method="post" action="{% url 'sharing:revoke_all' file.pk %}" data-confirm="Отозвать все активные ссылки к файлу?">
+      {% csrf_token %}<button class="secondary-button" type="submit">Отозвать все</button>
+    </form>
+  </article>
+  <article class="settings-card">
+    <div class="settings-card-title"><span class="settings-icon">＠</span><div><h2>Пригласить пользователя</h2><p>Доступ заработает после входа с подтверждённой почтой.</p></div></div>
+    <form class="stack-form" method="post" action="{% url 'sharing:create_grant' file.pk %}">{% csrf_token %}<label class="field"><span>Почта</span>{{ grant_form.email }}</label><label class="field"><span>Роль</span>{{ grant_form.role }}</label><button class="primary-button fit" type="submit">Добавить</button></form>
+    {% for grant in grants %}<div class="grant-row"><span><strong>{{ grant.email }}</strong><small>{{ grant.get_role_display }}</small></span><form method="post" action="{% url 'sharing:revoke_grant' grant.pk %}">{% csrf_token %}<button class="link-button" type="submit">Отозвать</button></form></div>{% endfor %}
+  </article>
+</section>
+<section class="file-surface">
+  {% for link in links %}
+    <article class="settings-card" style="margin-bottom:16px">
+      <div class="settings-card-title"><span class="settings-icon">{% if link.active %}●{% else %}○{% endif %}</span><div><h2>{{ link.get_access_mode_display }}</h2><p class="share-url">{% url 'sharing:public_share' link.public_token as share_path %}{{ request.scheme }}://{{ request.get_host }}{{ share_path }}</p></div></div>
+      <form class="stack-form" method="post" action="{% url 'sharing:update' link.pk %}">
+        {% csrf_token %}
+        <label class="field"><span>Кому доступна ссылка</span><select name="access_mode">{% for value, label in create_form.fields.access_mode.choices %}<option value="{{ value }}"{% if link.access_mode == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+        <label class="field"><span>Новый пароль</span><input type="password" name="password" minlength="8" maxlength="128"><small>Оставьте пустым, чтобы сохранить текущий.</small></label>
+        <label class="field"><span>Срок действия</span><input type="datetime-local" name="expires_at" value="{% if link.expires_at %}{{ link.expires_at|date:'Y-m-d\TH:i' }}{% endif %}"></label>
+        <label><input type="checkbox" name="invalidate_existing"> Закрыть доступ в уже подтверждённых сессиях</label>
+        <button class="primary-button fit" type="submit">Сохранить</button>
+      </form>
+      {% if link.active %}<form method="post" action="{% url 'sharing:revoke' link.pk %}" data-confirm="Отозвать эту ссылку?">{% csrf_token %}<button class="link-button" type="submit">Отозвать ссылку</button></form>{% endif %}
+    </article>
+  {% empty %}
+    <div class="empty-state"><span class="empty-cloud">↗</span><h2>Ссылок пока нет</h2><p>Создайте первую ссылку выше.</p></div>
+  {% endfor %}
+</section>
+{% endblock %}

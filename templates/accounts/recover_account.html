@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}Восстановление аккаунта — cloud.nimbus{% endblock %}
+{% block content %}<section class="auth-card compact-card"><div class="auth-copy"><h1>Восстановление аккаунта</h1>{% if valid %}<p>Удаление ещё можно отменить.</p>{% else %}<p>Ссылка недействительна или срок восстановления истёк.</p>{% endif %}</div>{% if valid %}<form method="post">{% csrf_token %}<button class="primary-button full" type="submit">Восстановить аккаунт</button></form>{% else %}<a class="secondary-button full" href="{% url 'accounts:login' %}">Ко входу</a>{% endif %}</section>{% endblock %}

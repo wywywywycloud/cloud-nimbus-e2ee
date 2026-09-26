@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Регистрация — cloud.nimbus{% endblock %}
+{% block content %}
+<section class="auth-card auth-card-wide">
+  <a class="auth-brand" href="{% url 'accounts:login' %}"><img src="{% static 'img/cloud-nimbus-logo.png' %}" alt=""><span>cloud.nimbus</span></a>
+  <div class="auth-copy"><h1 data-i18n="create_account">Создайте облако</h1><p>После регистрации подтвердите почту шестизначным кодом.</p></div>
+  <form method="post" class="stack-form">
+    {% include 'accounts/_form.html' %}
+    <button class="primary-button" type="submit" data-i18n="register">Зарегистрироваться</button>
+  </form>
+  <div class="auth-links one"><a href="{% url 'accounts:login' %}" data-i18n="login">Уже есть аккаунт</a></div>
+</section>
+{% endblock %}

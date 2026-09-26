@@ -1,0 +1,3 @@
+[submodule "cloud-cypher"]
+	path = cloud-cypher
+	url = https://github.com/wywywywycloud/cloud-cypher.git

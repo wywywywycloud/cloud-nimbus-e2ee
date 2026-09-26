@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}{{ current_folder.name }} — cloud.nimbus{% endblock %}
+{% block content %}
+{% if request.user.is_authenticated %}
+<div class="shared-context-bar"><a href="{% url 'sharing:shared_with_me' %}">← Доступные мне</a><span>Владелец: {{ share.owner.username }}</span></div>
+{% else %}
+<header class="shared-header"><a class="auth-brand" href="{% url 'sharing:public_share' share.public_token %}"><span class="shared-logo">n</span><strong>cloud.nimbus</strong></a><span class="shared-by">Папкой поделился {{ share.owner.username }}</span></header>
+{% endif %}
+<section class="shared-browser">
+  <nav class="breadcrumbs" aria-label="Путь">
+    {% for crumb in breadcrumbs %}{% if crumb.pk == share.folder_id %}<a href="{% url 'sharing:public_share' share.public_token %}">{{ crumb.name }}</a>{% else %}<span>›</span><a href="{% url 'sharing:public_share_folder' share.public_token crumb.pk %}">{{ crumb.name }}</a>{% endif %}{% endfor %}
+  </nav>
+  <div class="shared-title"><div><span class="eyebrow">Общая папка</span><h1>{{ current_folder.name }}</h1></div><span>Папки: {{ folders|length }} · Файлы: {{ files|length }}</span></div>
+  <div class="file-table shared-table">
+    <div class="file-row file-head"><span>Название</span><span>Размер</span><span>Изменён</span><span></span></div>
+    {% for folder in folders %}<div class="file-row"><a class="file-name" href="{% url 'sharing:public_share_folder' share.public_token folder.pk %}"><span class="file-icon folder-icon"><img src="{% static 'icons/adwaita/folder.png' %}" alt=""></span><strong>{{ folder.name }}</strong></a><span class="file-size">{{ folder.total_size_bytes|filesizeformat }}</span><span class="file-date">{{ folder.updated_at|date:'d.m.Y, H:i' }}</span><span></span></div>{% endfor %}
+    {% for file in files %}<div class="file-row"><a class="file-name" href="{% if file.downloadable %}{% url 'sharing:public_share_file' share.public_token file.pk %}{% else %}#{% endif %}"><span class="file-icon"><img class="mime-icon" src="{% static 'icons/adwaita/file-generic.png' %}" alt=""></span><strong>{{ file.display_name }}</strong></a><span class="file-size">{{ file.size|filesizeformat }}</span><span class="file-date">{{ file.updated_at|date:'d.m.Y, H:i' }}</span><span>{% if file.downloadable %}<span class="adwaita-icon icon-download" aria-label="Скачать"></span>{% endif %}</span></div>{% endfor %}
+  </div>
+  {% if not folders and not files %}<div class="empty-state"><span class="empty-cloud adwaita-icon icon-remote-folder" aria-hidden="true"></span><h2>Папка пустая</h2></div>{% endif %}
+</section>
+{% endblock %}

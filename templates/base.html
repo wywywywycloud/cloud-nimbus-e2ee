@@ -1,0 +1,104 @@
+{% load static i18n %}
+<!doctype html>
+<html lang="{{ request.LANGUAGE_CODE|default:'ru' }}" dir="{{ request.language_direction|default:'ltr' }}" data-theme="{{ request.ui_theme|default:'dark' }}" data-density="{% if request.user.is_authenticated %}{{ request.user.display_density }}{% else %}comfortable{% endif %}" data-default-view="{% if request.user.is_authenticated %}{{ request.user.default_view_mode }}{% else %}grid{% endif %}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{% translate 'cloud.nimbus — личное облачное хранилище' %}">
+  <meta name="theme-color" content="{% if request.ui_theme == 'light' %}#f7f5fb{% else %}#2c2b33{% endif %}">
+  <script>
+    (() => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const touch = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+      const phoneLandscape = touch && Math.min(width, height) <= 500 && Math.max(width, height) <= 1024;
+      document.documentElement.dataset.deviceClass = width <= 720 || phoneLandscape ? 'mobile' : (touch && width <= 1024 ? 'tablet' : 'desktop');
+    })();
+  </script>
+  <title>{% block title %}cloud.nimbus{% endblock %}</title>
+  <link rel="icon" type="image/png" href="{% static 'img/favicon.png' %}">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260926-finder-1">
+  <script defer src="{% static 'js/i18n.js' %}"></script>
+  <script defer src="{% static 'js/app.js' %}?v=20260926-settings-1"></script>
+</head>
+<body class="{% if request.user.is_authenticated %}app-body{% else %}auth-body{% endif %}">
+  {% if request.user.is_authenticated %}
+    <header class="mobile-header">
+      <a class="mobile-brand" href="{% url 'drive:home' %}" aria-label="cloud.nimbus">
+        <img src="{% static 'img/cloud-nimbus-logo.png' %}" alt="">
+      </a>
+      <strong class="mobile-header-title">{% block mobile_title %}{% if active_view == 'recent' %}{% translate "Недавние" %}{% elif active_view == 'favorites' %}{% translate "Избранное" %}{% elif active_view == 'shared' %}Доступные мне{% elif current_folder %}{{ current_folder.name }}{% else %}{% translate "Все файлы" %}{% endif %}{% endblock %}</strong>
+      <div class="mobile-profile dropdown">
+        <button class="mobile-profile-button" type="button" data-dropdown-trigger aria-expanded="false" aria-label="{% translate 'Профиль' %}">
+          <span class="avatar">{{ request.user.username|first|upper }}</span>
+        </button>
+        <div class="dropdown-panel profile-dropdown" hidden>
+          <a href="{% url 'accounts:settings' %}" data-i18n="login_settings"><span class="adwaita-icon icon-settings" aria-hidden="true"></span>{% translate "Настройки" %}</a>
+          <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button type="submit" data-i18n="logout"><span class="adwaita-icon icon-logout" aria-hidden="true"></span>{% translate "Выйти" %}</button></form>
+        </div>
+      </div>
+    </header>
+    <aside class="sidebar">
+      <a class="brand" href="{% url 'drive:home' %}">
+        <img src="{% static 'img/cloud-nimbus-logo.png' %}" alt="">
+        <span><strong>cloud.nimbus</strong><small>{% translate "personal storage" %}</small></span>
+      </a>
+      <nav class="nav-list" aria-label="{% translate 'Основная навигация' %}">
+        <a class="nav-item {% if request.resolver_match.namespace == 'drive' and active_view != 'recent' and active_view != 'favorites' %}active{% endif %}" href="{% url 'drive:home' %}">
+          <span class="nav-icon adwaita-icon icon-home" aria-hidden="true"></span><span data-i18n="my_files">{% translate "Все файлы" %}</span>
+        </a>
+        <a class="nav-item {% if active_view == 'recent' %}active{% endif %}" href="{% url 'drive:home' %}?view=recent">
+          <span class="nav-icon adwaita-icon icon-recent" aria-hidden="true"></span><span data-i18n="recent">{% translate "Недавние" %}</span>
+        </a>
+        <a class="nav-item {% if active_view == 'favorites' %}active{% endif %}" href="{% url 'drive:home' %}?view=favorites">
+          <span class="nav-icon adwaita-icon icon-favorite" aria-hidden="true"></span><span data-i18n="favorites">{% translate "Избранное" %}</span>
+        </a>
+        <a class="nav-item {% if active_view == 'shared' %}active{% endif %}" href="{% url 'sharing:shared_with_me' %}">
+          <span class="nav-icon adwaita-icon icon-shared" aria-hidden="true"></span><span>Доступные мне</span>
+        </a>
+      </nav>
+      <div class="storage-card">
+        <div class="storage-label"><span data-i18n="storage">{% translate "Хранилище" %}</span><span>{{ storage_used_mb|floatformat:1 }} / {{ storage_display_limit_mb|floatformat:0 }} MiB</span></div>
+        <div class="progress"><span style="width: {{ storage_percent_css }}%"></span></div>
+        {% if telegram_quota_required %}<a class="storage-unlock-link" href="{% url 'accounts:settings' %}"><span class="adwaita-icon icon-lock" aria-hidden="true"></span>Загрузка заблокирована до привязки Telegram</a>{% endif %}
+      </div>
+      <div class="legal-links"><a href="{% url 'core:offer' %}" data-i18n="terms">{% translate "Условия" %}</a><span>·</span><a href="{% url 'core:privacy' %}" data-i18n="privacy">{% translate "Конфиденциальность" %}</a></div>
+      <div class="profile-menu dropdown">
+        <button class="profile-button" type="button" data-dropdown-trigger aria-expanded="false">
+          <span class="avatar">{{ request.user.username|first|upper }}</span>
+          <span class="profile-copy"><strong>{{ request.user.username }}</strong><small>{{ request.user.email }}</small></span>
+          <span class="chevron adwaita-icon icon-chevron-down icon-rotate-180" aria-hidden="true"></span>
+        </button>
+        <div class="dropdown-panel profile-dropdown" hidden>
+          <a href="{% url 'accounts:settings' %}" data-i18n="login_settings"><span class="adwaita-icon icon-settings" aria-hidden="true"></span>{% translate "Настройки" %}</a>
+          <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button type="submit" data-i18n="logout"><span class="adwaita-icon icon-logout" aria-hidden="true"></span>{% translate "Выйти" %}</button></form>
+        </div>
+      </div>
+    </aside>
+    <nav class="mobile-nav" aria-label="{% translate 'Мобильная навигация' %}">
+      <a class="mobile-nav-item {% if request.resolver_match.namespace == 'drive' and active_view != 'recent' and active_view != 'favorites' %}active{% endif %}" href="{% url 'drive:home' %}">
+        <span class="adwaita-icon icon-home" aria-hidden="true"></span><small>{% translate "Файлы" %}</small>
+      </a>
+      <a class="mobile-nav-item {% if active_view == 'recent' %}active{% endif %}" href="{% url 'drive:home' %}?view=recent">
+        <span class="adwaita-icon icon-recent" aria-hidden="true"></span><small>{% translate "Недавние" %}</small>
+      </a>
+      <a class="mobile-nav-item {% if active_view == 'favorites' %}active{% endif %}" href="{% url 'drive:home' %}?view=favorites">
+        <span class="adwaita-icon icon-favorite" aria-hidden="true"></span><small>{% translate "Избранное" %}</small>
+      </a>
+      <a class="mobile-nav-item {% if active_view == 'shared' %}active{% endif %}" href="{% url 'sharing:shared_with_me' %}">
+        <span class="adwaita-icon icon-shared" aria-hidden="true"></span><small>Доступные</small>
+      </a>
+    </nav>
+  {% endif %}
+
+  <main class="{% if request.user.is_authenticated %}app-main{% else %}auth-main{% endif %}">
+    {% if messages %}
+      <div class="toast-stack" aria-live="polite">
+        {% for message in messages %}<div class="toast {{ message.tags }}">{{ message }}</div>{% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+    {% if not request.user.is_authenticated %}<footer class="auth-footer"><a href="/vault/verify.html">Как проверить код и шифрование</a><span>·</span><a href="{% url 'core:offer' %}" data-i18n="terms">{% translate "Условия использования" %}</a><span>·</span><a href="{% url 'core:privacy' %}" data-i18n="privacy">{% translate "Конфиденциальность" %}</a></footer>{% endif %}
+  </main>
+</body>
+</html>

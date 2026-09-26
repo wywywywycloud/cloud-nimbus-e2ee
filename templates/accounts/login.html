@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Вход — cloud.nimbus{% endblock %}
+{% block content %}
+<section class="auth-card">
+  <a class="auth-brand" href="{% url 'accounts:login' %}"><img src="{% static 'img/cloud-nimbus-logo.png' %}" alt=""><span>cloud.nimbus</span></a>
+  <div class="auth-copy"><h1 data-i18n="login_to" data-i18n-name="cloud.nimbus">Вход в cloud.nimbus</h1><p>{% if show_password %}Для этого аккаунта нужен пароль.{% else %}Введите логин или почту — код придёт на привязанный адрес.{% endif %}</p></div>
+  <form method="post" class="stack-form">
+    {% if show_password %}<input type="hidden" name="password_step" value="1">{% endif %}
+    {% include 'accounts/_form.html' %}
+    <button class="primary-button" type="submit" data-i18n="{% if show_password %}sign_in{% else %}continue{% endif %}">{% if show_password %}Войти{% else %}Получить код{% endif %}</button>
+  </form>
+  <div class="auth-links"><a href="{% url 'accounts:remind_username' %}" data-i18n="forgot_username">Не помню логин</a><a href="{% url 'accounts:password_reset' %}" data-i18n="forgot_password">Не помню пароль</a><a href="{% url 'accounts:register' %}" data-i18n="register">Регистрация</a></div>
+</section>
+{% endblock %}
