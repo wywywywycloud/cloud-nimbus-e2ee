@@ -141,3 +141,41 @@ class OnboardingTests(TestCase):
         self.assertEqual(self.client.get('/api/cypher/files/').status_code, 401)
         self.assertFalse(self.status()['authenticated'])
         self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_skip_requires_explicit_consent_and_preserves_totp_gate(self):
+        path = '/api/cypher/passkey/skip/'
+        self.assertEqual(self.post(path, {'accept_risk': True}).status_code, 403)
+        self.user.telegram_user_id = 12345
+        self.user.save()
+        vault = Vault.objects.create(owner=self.user, wrapped_key=encrypted())
+        for body in ({}, {'accept_risk': False}, {'accept_risk': 1}, {'accept_risk': 'true'}):
+            self.assertEqual(self.post(path, body).status_code, 400)
+        self.assertEqual(self.post(path, {'accept_risk': True}).status_code, 200)
+        self.assertEqual(self.status()['next_step'], 'totp')
+        self.assertTrue(self.status()['passkey_skipped'])
+        self.assertFalse(self.status()['passkey_ready'])
+        self.assertFalse(self.status()['upload_ready'])
+        self.assertEqual(self.client.get('/api/cypher/files/').status_code, 403)
+        setup = self.post('/api/otp/setup/start/').json()
+        self.assertEqual(self.post('/api/otp/setup/finish/', {'challenge': setup['challenge'], 'code': pyotp.TOTP(setup['secret']).now()}).status_code, 200)
+        self.assertTrue(self.status()['upload_ready'])
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory, override_settings(MEDIA_ROOT=directory):
+            response = self.client.post('/api/cypher/files/', {'vault_id': str(vault.pk), 'id': str(uuid.uuid4()), 'metadata': json.dumps(encrypted()), 'file': SimpleUploadedFile('cipher.bin', b'x' * 32)})
+            self.assertEqual(response.status_code, 201, response.content)
+
+    def test_skip_requires_csrf_and_valid_session(self):
+        from django.test import Client
+        self.user.telegram_user_id = 12345
+        self.user.save()
+        Vault.objects.create(owner=self.user, wrapped_key=encrypted())
+        strict = Client(enforce_csrf_checks=True)
+        strict.force_login(self.user)
+        onboarding_session(strict, self.user)
+        self.assertEqual(strict.post('/api/cypher/passkey/skip/', {'accept_risk': True}, content_type='application/json').status_code, 403)
+        session = self.client.session
+        session['onboarding']['started_at'] -= 901
+        session.save()
+        self.assertEqual(self.post('/api/cypher/passkey/skip/', {'accept_risk': True}).status_code, 401)
+        self.user.refresh_from_db()
+        self.assertIsNone(self.user.passkey_risk_accepted_at)

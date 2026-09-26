@@ -2,7 +2,7 @@
 
 ## Статус и граница проектов
 
-Реализуется локальный E2EE MVP; production отсутствует. [cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee) содержит Django backend под LGPL-3.0-or-later. [cloud-cypher](https://github.com/wywywywycloud/cloud-cypher) — отдельный клиент под Apache-2.0; vendored OPAQUE сохраняет свою MIT-лицензию. Старый Telegram/plaintext MVP остаётся историей и совместимостью, а не текущим описанием нового файлового потока.
+E2EE MVP развёрнут вручную на https://nimbus.by:9443 27 сентября 2026 года. Это публичный прототип, а не подтверждение независимого security review или физической синхронизации passkey. См. [DEPLOYMENT.md](DEPLOYMENT.md). [cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee) содержит Django backend под LGPL-3.0-or-later. [cloud-cypher](https://github.com/wywywywycloud/cloud-cypher) — отдельный клиент под Apache-2.0; vendored OPAQUE сохраняет свою MIT-лицензию. Старый Telegram/plaintext MVP остаётся историей и совместимостью, а не текущим описанием нового файлового потока.
 
 ```text
 Браузер: cloud-cypher
@@ -16,7 +16,7 @@ Django
   ├── vaults → зашифрованные метаданные, квота, owner checks
   ├── passkeys → проверка WebAuthn assertions и PRF-конверт
   ├── otp_auth → обязательный TOTP как дополнительный фактор OPAQUE-входа
-  ├── SQLite локально; PostgreSQL перед production
+  ├── SQLite локально; PostgreSQL 18 на публичном сервере
   └── private media/cypher/ → только ciphertext нового API
 ```
 
@@ -46,7 +46,7 @@ Go storage gateway подготовлен отдельно и не являет�
 
 `OpaqueCredential` хранит registration record и версию. `OpaqueChallenge` хранит одноразовый обмен на сервере, привязанный к серверной Django-сессии и действующий 120 секунд. `serverLoginState` не отправляется браузеру и не помещается в signed-cookie session. CSRF требуется для всех изменяющих запросов; rate limits применяются по IP и идентификатору.
 
-Контракт и статусы перечислены в [AUTH_API.md](AUTH_API.md). Регистрация использует только username/OPAQUE, затем ограниченную onboarding-сессию: Telegram → vault/passkey → TOTP. Незавершённый аккаунт не имеет доступа к файловым и legacy endpoints. Последующий OPAQUE-вход всегда требует TOTP; passkey/PRF остаётся вторым криптографическим путём. Email auth и старые forms закрыты независимо от legacy flags.
+Контракт и статусы перечислены в [AUTH_API.md](AUTH_API.md). Регистрация использует только username/OPAQUE, затем ограниченную onboarding-сессию: Telegram → vault и passkey либо принятие риска → TOTP. Незавершённый аккаунт не имеет доступа к файловым и legacy endpoints. Последующий OPAQUE-вход всегда требует TOTP; passkey/PRF остаётся вторым криптографическим путём. Email auth и старые forms закрыты независимо от legacy flags.
 
 Новая OPAQUE-запись и обёртка активного vault сохраняются атомарно. Смена auth hash инвалидирует другие сессии. OPAQUE session key сервер знает и для файлов он не используется; только клиентский export key защищает vault. При компрометации setup и records возможен подбор слабого пароля.
 
@@ -54,7 +54,7 @@ Go storage gateway подготовлен отдельно и не являет�
 
 TOTP обязателен для последующих парольных входов. Отдельный recovery code не используется. Пароль через OPAQUE и passkey через PRF — два пути к клиентскому секрету. Ни email, ни Telegram ID, ни TOTP seed, известный backend, сами по себе не заменяют ключ расшифрования, скрытый от администратора.
 
-Рабочий прототип `passkeys/` проверяет WebAuthn challenge, origin/RP ID, user presence/verification, подпись и backup flags; секретный PRF-результат остаётся в браузере и защищает дополнительный конверт того же ключа vault. Серверу нельзя доверять присланный браузером признак `prf` как доказательство криптографической проверки. После регистрации предусмотрена отдельная assertion/activation с подписанными `BE=1`, `BS=1`. Перед upload независимо от flags обязателен Telegram, TOTP и активный passkey-конверт с этими флагами. Последующий вход с `BS=0` допускает чтение, но upload блокируется до успешной assertion с `BS=1`.
+Рабочий прототип `passkeys/` проверяет WebAuthn challenge, origin/RP ID, user presence/verification, подпись и backup flags; секретный PRF-результат остаётся в браузере и защищает дополнительный конверт того же ключа vault. Серверу нельзя доверять присланный браузером признак `prf` как доказательство криптографической проверки. После регистрации предусмотрена отдельная assertion/activation с подписанными `BE=1`, `BS=1`. Перед upload обязательны Telegram, TOTP и активный passkey-конверт с этими флагами либо сохранённое принятие риска при отсутствии активного passkey. Последующий вход с `BS=0` допускает чтение, но upload блокируется до успешной assertion с `BS=1`.
 
 Сохранившийся passkey позволяет создать новый OPAQUE password record с атомарной переупаковкой прежнего vault. Смена пароля не удаляет самостоятельный passkey-конверт. Потерянный passkey через код в привязанном Telegram и точное подтверждение `DELETE ALL FILES` запускает удаление всех **CipherFile шифрованного хранилища**, отзыв vault/envelopes/сессий и новый пустой контур. Legacy plaintext не входит в этот reset endpoint; новых plaintext-записей нет, существующие пользовательские данные по сообщению пользователя отсутствуют. Разрушительный сброс не является восстановлением прежних файлов.
 
@@ -87,6 +87,10 @@ Backup-eligible означает пригодность credential к backup, а
 ## Эксплуатационные ограничения
 
 Production требует PostgreSQL, TLS, точного passkey origin/RP ID при использовании эксперимента, Telegram bot, защищённого setup/secret manager, независимой поставки клиента, scheduler очистки, проверенной recovery-модели, backup/restore и security review. Бэкапы ciphertext не заменяют пользовательские секреты. Отзыв/очистка должны учитываться при restore, чтобы восстановленная БД не открыла старые поколения. Физическое уничтожение всех backup/replica-копий определяется retention, а не строкой `DELETE`.
+
+## Добровольный пропуск passkey
+
+На шаге passkey пользователь может явно принять риск невосстановимой потери файлов при потере пароля. Согласие сохраняется на сервере; Telegram и TOTP остаются обязательными. При активном passkey согласие не обходит требования BE/BS. Разрушительный reset очищает согласие. Контракт и UI описаны в [AUTH_API.md](AUTH_API.md), решение — в [DECISIONS.md](DECISIONS.md). Изменение локальное; для deployment нужна миграция `accounts.0008_user_passkey_risk_accepted_at` и обновлённый клиент.
 
 
 ## 2026-09-27: passkey на внешнем устройстве

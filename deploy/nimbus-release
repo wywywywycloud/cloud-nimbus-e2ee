@@ -35,7 +35,10 @@ export PYTHONDONTWRITEBYTECODE=1
 cd "$release_dir"
 runuser -u nimbus --preserve-environment -- .venv/bin/python manage.py check --deploy --fail-level WARNING
 runuser -u nimbus --preserve-environment -- .venv/bin/python manage.py collectstatic --noinput
-chown -R root:root "$release_dir/staticfiles"
+# collectstatic inherits private upload modes (0600/0700). Keep generated assets
+# immutable to the app, but readable through its group after ownership changes.
+chown -R root:nimbus "$release_dir/staticfiles"
+chmod -R u=rwX,g=rX,o= "$release_dir/staticfiles"
 # Persistent marker also prevents a reboot from starting code against a partial migration.
 [[ ! -e /etc/nimbus/maintenance ]] || { echo 'Existing maintenance requires operator review' >&2; exit 1; }
 trap 'touch /etc/nimbus/maintenance; systemctl stop nimbus-maintenance.timer nimbus-maintenance.service nimbus-telegram.service nimbus.service || true; echo "Deployment failed in maintenance; inspect migrations before restart" >&2' ERR

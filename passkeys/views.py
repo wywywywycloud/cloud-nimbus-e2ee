@@ -415,7 +415,8 @@ def reset_finish(request):
         TotpCredential.objects.filter(user=user).delete()
         user.used_bytes = max(0, user.used_bytes - released)
         user.set_unusable_password()
-        user.save(update_fields=["password", "used_bytes"])
+        user.passkey_risk_accepted_at = None
+        user.save(update_fields=["password", "used_bytes", "passkey_risk_accepted_at"])
         request.session.flush()
         from accounts.onboarding import begin
         begin(request, user)

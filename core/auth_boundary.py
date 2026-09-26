@@ -36,7 +36,7 @@ class BrowserAuthBoundaryMiddleware:
             return JsonResponse({'error': 'onboarding_expired'}, status=401)
         allowed = {'/api/opaque/change/start/', '/api/opaque/change/finish/'} if reset else {
             'telegram': {'/auth/telegram/link/', '/auth/telegram/status/'},
-            'passkey': {'/api/cypher/vault/', '/api/passkeys/register/start/', '/api/passkeys/register/finish/', '/api/passkeys/activate/start/', '/api/passkeys/activate/finish/', '/auth/telegram/status/'},
+            'passkey': {'/api/cypher/passkey/skip/', '/api/cypher/vault/', '/api/passkeys/register/start/', '/api/passkeys/register/finish/', '/api/passkeys/activate/start/', '/api/passkeys/activate/finish/', '/auth/telegram/status/'},
             'totp': {'/api/otp/setup/start/', '/api/otp/setup/finish/'},
         }.get(gates['next_step'], set())
         allowed |= {'/api/opaque/change/start/', '/api/opaque/change/finish/'}

@@ -58,6 +58,8 @@ def _vault_data(vault):
 
 def _passkey_ready(user, vault):
     from passkeys.models import PasskeyCredential
+    if vault is not None and user.passkey_risk_accepted_at is not None and not PasskeyCredential.objects.filter(user=user, active=True, backup_eligible=True, vault__owner=user, vault__revoked_at__isnull=True).exists():
+        return True
     return vault is not None and PasskeyCredential.objects.filter(user=user, vault=vault, active=True, backup_eligible=True, backed_up=True).exists()
 
 
@@ -278,3 +280,26 @@ def reset(request):
         user.save(update_fields=["used_bytes"])
     pending = BlobDeletion.objects.filter(storage_key__startswith=f"cypher/{vault_id}/").count()
     return JsonResponse({"deleted": True, "cleanup_pending": pending})
+
+
+@authenticated
+@require_POST
+def skip_passkey(request):
+    from accounts.onboarding import state, valid
+    from core.audit import audit
+    try:
+        payload = _json_body(request)
+    except ValueError:
+        return _error("invalid_request")
+    if payload != {"accept_risk": True} or payload.get("accept_risk") is not True:
+        return _error("risk_acceptance_required")
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(pk=request.user.pk)
+        if not valid(request) or state(user)['next_step'] != 'passkey':
+            return _error("onboarding_required", 403)
+        if not Vault.objects.filter(owner=user, revoked_at__isnull=True).exists():
+            return _error("vault_required", 409)
+        user.passkey_risk_accepted_at = timezone.now()
+        user.save(update_fields=['passkey_risk_accepted_at'])
+    audit(request, "account.passkey_risk_accepted", actor=user)
+    return JsonResponse({"ok": True})

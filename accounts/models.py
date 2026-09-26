@@ -54,6 +54,7 @@ class User(AbstractUser):
     telegram_username = models.CharField(max_length=64, blank=True)
     telegram_first_name = models.CharField(max_length=128, blank=True)
     telegram_linked_at = models.DateTimeField(null=True, blank=True)
+    passkey_risk_accepted_at = models.DateTimeField(null=True, blank=True)
     scheduled_deletion_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     def save(self, *args, **kwargs):

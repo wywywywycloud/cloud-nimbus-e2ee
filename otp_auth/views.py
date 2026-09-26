@@ -64,7 +64,7 @@ def _enrollable(user):
     if not _available(user):
         return False
     gates = state(user)
-    return gates['telegram_ready'] and gates['passkey_ready']
+    return gates['telegram_ready'] and (gates['passkey_ready'] or gates['passkey_skipped'])
 
 
 def _recent(request, user):

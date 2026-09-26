@@ -53,11 +53,14 @@ async function otpIfNeeded(target = page, expectNoSession = false) {
 async function screenshots(label) {
   await mkdir(join(reports, 'screenshots'), {recursive: true});
   for (const theme of ['light', 'dark']) {
-    if (await page.locator('html').getAttribute('data-theme') !== theme) await page.locator('#theme-button').click();
+    if (await page.locator('html').getAttribute('data-theme') !== theme) {
+      if (await page.locator('dialog[open]').count()) await page.locator('#theme-button').evaluate(button => button.click());
+      else await page.locator('#theme-button').click();
+    }
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({width, height: 900});
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `layout overflow ${label}/${theme}/${width}`);
-      await page.screenshot({path: join(reports, 'screenshots', `${label}-${theme}-${width}.png`), fullPage: true, mask: [page.locator('#totp-secret')]});
+      await page.screenshot({path: join(reports, 'screenshots', `${label}-${theme}-${width}.png`), fullPage: true, mask: [page.locator('#totp-qr'), page.locator('#totp-secret')]});
     }
   }
   await page.setViewportSize({width: 1280, height: 900});
@@ -67,6 +70,12 @@ async function setupTotp() {
   await page.locator('#totp-start-button').click();
   await page.locator('#totp-finish-form').waitFor({state: 'visible'});
   totpSecret = await page.locator('#totp-secret').inputValue();
+  assert.equal(await page.locator('#totp-qr').isVisible(), true);
+  assert.equal(await page.locator('#totp-secret').isVisible(), false);
+  await screenshots('onboarding-totp-qr');
+  // Disposable synthetic secret only, for an independent QR decoding check.
+  await page.locator('#totp-qr').screenshot({path: join(reports, 'synthetic-totp-qr.png')});
+  await writeFile(join(reports, 'synthetic-totp-qr-secret.txt'), totpSecret);
   previousCode = '';
   await page.locator('#totp-code').fill(await nextTotp());
   await page.locator('#totp-finish-button').click();
@@ -118,6 +127,16 @@ try {
   await page.waitForFunction(() => !document.querySelector('#enroll-passkey-button').disabled);
   assert.equal(await page.locator('#files-panel').isVisible(), false);
   await screenshots('onboarding-passkey');
+  await page.locator('#skip-passkey-button').click();
+  await page.locator('#skip-passkey-dialog').waitFor({state: 'visible'});
+  await screenshots('skip-passkey-warning');
+  await page.locator('#return-passkey-button').click();
+  assert.equal(await page.locator('#passkey-step').isVisible(), true);
+  assert.equal(await page.evaluate(async () => (await (await fetch('/api/cypher/session/')).json()).passkey_skipped), false);
+  await page.locator('#skip-passkey-button').click();
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#skip-passkey-dialog').isVisible(), false);
+  record('skip warning is cancellable without accepting risk');
   record('synthetic Telegram confirmation and return-to-tab advance to mandatory passkey');
   // Reload loses only local keys. Password proof resumes the same setup step.
   await page.reload();
@@ -125,6 +144,18 @@ try {
   await page.locator('#unlock-button').click();
   await page.locator('#passkey-step').waitFor({state: 'visible'});
   record('reload resumes incomplete onboarding after fresh OPAQUE proof');
+  // Real server error codes must stay visible beside the passkey action.
+  for (const [code, message] of [['synced_passkey_required', 'только для этого устройства'], ['passkey_backup_required', 'не подтвердил резервирование']]) {
+    await page.route('**/api/passkeys/register/finish/', route => route.fulfill({status: 400, contentType: 'application/json', body: JSON.stringify({error: code})}));
+    await page.locator('#enroll-passkey-button').click();
+    await page.waitForFunction(text => document.querySelector('#onboarding-status').textContent.includes(text), message);
+    assert.equal(await page.locator('#onboarding-status').isVisible(), true);
+    assert.equal(await page.locator('#status-message').isVisible(), false);
+    assert.equal(await page.locator('#files-panel').isVisible(), false);
+    await page.unroute('**/api/passkeys/register/finish/');
+  }
+  await screenshots('onboarding-passkey-error');
+  record('device-only and unbacked passkey errors remain visible in onboarding without unlocking files');
   await page.locator('#enroll-passkey-button').click();
   await page.locator('#totp-step').waitFor({state: 'visible'});
   assert.equal(await page.locator('#files-panel').isVisible(), false);
@@ -141,6 +172,8 @@ try {
   await pendingPage.locator('#totp-step').waitFor({state: 'visible'});
   await setupTotp();
   await page.waitForFunction(() => !document.querySelector('#upload-button').disabled);
+  assert.equal(await page.locator('#totp-qr').getAttribute('width'), '0');
+  assert.equal(await page.locator('#totp-secret').inputValue(), '');
   record('mandatory TOTP enrollment completes onboarding and permits file access');
   const pendingSession = await pendingPage.evaluate(async () => (await fetch('/api/cypher/session/')).json());
   assert.equal(pendingSession.authenticated, false);
@@ -173,7 +206,10 @@ try {
   for (const view of ['list', 'grid']) {
     await page.locator(`#view-${view}`).click();
     for (const theme of ['light', 'dark']) {
-      if (await page.locator('html').getAttribute('data-theme') !== theme) await page.locator('#theme-button').click();
+      if (await page.locator('html').getAttribute('data-theme') !== theme) {
+      if (await page.locator('dialog[open]').count()) await page.locator('#theme-button').evaluate(button => button.click());
+      else await page.locator('#theme-button').click();
+    }
       for (const width of [1280, 390, 320]) {
         await page.setViewportSize({width, height: 900});
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `layout overflow ${view}/${theme}/${width}`);
@@ -294,7 +330,7 @@ try {
   await writeFile(join(reports, 'browser-e2e.json'), JSON.stringify({status: 'passed', browser: await browser.version(), checks,
     limits: ['Synthetic Chrome virtual authenticator, not actual Apple/Google cloud synchronization.', 'No independent security audit or production load test.', 'Screenshots and input files contain synthetic data only.']}, null, 2) + '\n');
 } catch (error) {
-  await page.screenshot({path: join(reports, 'browser-failure.png'), fullPage: true, mask: [page.locator('#totp-secret'), page.locator('#reset-code')]}).catch(() => {});
+  await page.screenshot({path: join(reports, 'browser-failure.png'), fullPage: true, mask: [page.locator('#totp-qr'), page.locator('#totp-secret'), page.locator('#reset-code')]}).catch(() => {});
   console.error('BROWSER FAILURE', error.message, 'PAGE ERRORS', errors);
   throw error;
 } finally {

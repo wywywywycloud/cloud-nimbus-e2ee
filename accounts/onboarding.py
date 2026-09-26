@@ -10,10 +10,11 @@ def state(user):
     telegram = bool(user.telegram_user_id)
     passkey = credentials.exists()
     totp = TotpCredential.objects.filter(user=user).exists()
-    step = 'telegram' if not telegram else 'passkey' if not passkey else 'totp' if not totp else None
+    skipped = user.passkey_risk_accepted_at is not None and not passkey
+    step = 'telegram' if not telegram else 'passkey' if not (passkey or skipped) else 'totp' if not totp else None
     return {'onboarding_required': step is not None, 'next_step': step, 'telegram_ready': telegram,
-            'passkey_ready': passkey, 'totp_ready': totp,
-            'upload_ready': telegram and totp and credentials.filter(backed_up=True).exists()}
+            'passkey_ready': passkey, 'passkey_skipped': skipped, 'totp_ready': totp,
+            'upload_ready': telegram and totp and (skipped or credentials.filter(backed_up=True).exists())}
 
 
 def begin(request, user, *, full=False):

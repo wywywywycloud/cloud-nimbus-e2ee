@@ -2,7 +2,7 @@
 
 ## Статус
 
-Рабочий контур локальный; публичный production не развёрнут. Новый клиент — `/vault/`, backend — Django. Go gateway не подключён. Telegram обязателен после OPAQUE-регистрации; затем настраиваются passkey и TOTP. Passkey/PRF и разрушительный Telegram reset реализуются как рабочий прототип; реальная межустройственная синхронизация ещё не проверена. OPAQUE-вход дополнительно подтверждается обязательным TOTP. TOTP не является ключом файлов.
+Публичный экземпляр работает на https://nimbus.by:9443 с 27 сентября 2026 года: Nginx, Gunicorn, PostgreSQL и приватное локальное хранилище. Развёрнут вручную без GitHub Actions SSH credentials; состояние и runbook — в [DEPLOYMENT.md](DEPLOYMENT.md). Новый клиент — `/vault/`, backend — Django. Go gateway не подключён. Telegram обязателен после OPAQUE-регистрации; затем предлагается passkey (можно пропустить с принятием риска) и настраивается обязательный TOTP. Passkey/PRF и разрушительный Telegram reset реализуются как рабочий прототип; реальная межустройственная синхронизация ещё не проверена. OPAQUE-вход дополнительно подтверждается обязательным TOTP. TOTP не является ключом файлов.
 
 ## Зависимости и первый запуск
 
@@ -50,7 +50,7 @@ Email auth/verification/recovery отключены. Telegram bot token и usern
 | `CYPHER_CLIENT_ROOT` | Каталог статического клиента, default `cloud-cypher/web` |
 | `NIMBUS_LEGACY_WRITES_ENABLED` | `0`; не включать plaintext fallback для E2EE |
 | `TELEGRAM_ENABLED` | `1` для работы бота; выключение не отключает обязательный onboarding gate |
-| `PASSKEY_REQUIRED` | Устаревший флаг не отключает проверку; upload всегда требует Telegram, TOTP и активный passkey-конверт текущего vault с подписанными `BE=1`, `BS=1` |
+| `PASSKEY_REQUIRED` | Устаревший флаг не отключает проверку; upload требует Telegram, TOTP и passkey с `BE=1`, `BS=1` либо явное принятие риска без активного passkey |
 | `LOGIN_SECOND_FACTOR_REQUIRED` | Устаревший флаг не отключает проверку; после onboarding OPAQUE всегда требует TOTP |
 | `PASSKEY_RP_ID` | Локально `localhost`; production требует явного значения |
 | `PASSKEY_ORIGIN` | Локально `http://localhost:8017`; точное совпадение origin |
@@ -109,10 +109,14 @@ Restore проверяется в изолированном окружении:
 
 Сохранившийся passkey позволяет сменить забытый пароль с сохранением файлов. Потеря всех passkey и пароля не устраняется одним Telegram/TOTP-кодом: разрушительный Telegram reset удаляет все CipherFile и конверты шифрованного хранилища, после чего создаётся новый пустой vault. Legacy plaintext не входит в этот endpoint; новые plaintext-записи выключены. Не описывать этот сброс как восстановление прежних файлов.
 
-## Перед production
+## Оставшиеся эксплуатационные проверки
 
-Проверить recovery-модель на реальных аутентификаторах; провести security review приложения и независимой поставки клиента; перейти на PostgreSQL; настроить TLS, Telegram polling/webhook, proxy limits, private storage, monitoring, scheduler и backup/restore. Проверить реальные браузеры и аутентификаторы, для passkey/PRF-прототипа. Go gateway не объявлять активным без полноценного adapter и тестов. Запуск development server и успешные локальные тесты не являются production-развёртыванием.
+Проверить recovery-модель на реальных аутентификаторах; провести security review приложения и независимой поставки клиента; проверить нагрузку, настроить внешние alerts, off-host encrypted backup и полноценный restore с актуальными отзывами. PostgreSQL, TLS, Telegram polling, proxy limits, private storage, cleanup и локальный backup уже установлены; initial database restore проверен в изоляции. Проверить реальные браузеры и аутентификаторы, для passkey/PRF-прототипа. Go gateway не объявлять активным без полноценного adapter и тестов. Запуск development server и успешные локальные тесты не являются production-развёртыванием.
 
 ## Telegram-контур
 
-Bot API, одноразовые deep links, request_contact и сравнение своего contact ID используются в текущем onboarding. TG ID не создаёт секретный ключ. На HTTPS :9443 используется отдельный polling service, поскольку Telegram webhook этот порт не поддерживает. Подробности локально подготовленного deployment: [DEPLOYMENT.md](DEPLOYMENT.md). Реальное production-развёртывание отдельно от локальных проверок.
+Bot API, одноразовые deep links, request_contact и сравнение своего contact ID используются в текущем onboarding. TG ID не создаёт секретный ключ. На HTTPS :9443 используется отдельный polling service, поскольку Telegram webhook этот порт не поддерживает. Фактическое развёртывание: [DEPLOYMENT.md](DEPLOYMENT.md). Для служб приложения IPv4 предпочитается IPv6 из-за подтверждённого timeout до Telegram по IPv6; системный DNS и IPv6 остальных процессов не менялись.
+
+## Добровольный пропуск passkey
+
+На шаге passkey пользователь может явно принять риск невосстановимой потери файлов при потере пароля. Согласие сохраняется на сервере; Telegram и TOTP остаются обязательными. При активном passkey согласие не обходит требования BE/BS. Разрушительный reset очищает согласие. Контракт и UI описаны в [AUTH_API.md](AUTH_API.md), решение — в [DECISIONS.md](DECISIONS.md). Изменение локальное; для deployment нужна миграция `accounts.0008_user_passkey_risk_accepted_at` и обновлённый клиент.

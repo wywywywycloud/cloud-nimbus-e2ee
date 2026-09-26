@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -27,6 +28,13 @@ elif name == 'runuser':
             pathlib.Path(command[-1]).mkdir(parents=True, exist_ok=True)
     elif '-m' in command and 'venv' in command:
         pathlib.Path(command[-1], 'bin').mkdir(parents=True)
+    elif 'collectstatic' in command:
+        # Match production's private upload modes inherited by collectstatic.
+        directory = pathlib.Path('staticfiles/admin')
+        directory.mkdir(mode=0o700)
+        asset = directory / 'asset.css'
+        asset.write_text('body {}')
+        asset.chmod(0o600)
     elif ('pip' in command[0] and fail == 'build') or ('migrate' in command and fail == 'migrate') or ('deployment_check' in command and fail == 'readiness'):
         sys.exit(1)
 elif name == 'mv':
@@ -96,6 +104,11 @@ class ReleaseFailures(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertFalse((root / 'etc/nimbus/maintenance').exists())
         self.assertEqual((root / 'opt/nimbus/current').resolve(), (root / 'opt/nimbus/releases' / SHA).resolve())
+        static_dir = root / 'opt/nimbus/current/staticfiles/admin'
+        # Root-owned generated files must remain readable to the app's group,
+        # with directory traversal, and without group write or public access.
+        self.assertEqual(stat.S_IMODE(static_dir.stat().st_mode), 0o750)
+        self.assertEqual(stat.S_IMODE((static_dir / 'asset.css').stat().st_mode), 0o640)
         stop = next(i for i, e in enumerate(events) if e[:2] == ['systemctl', 'stop'])
         self.assertIn('nimbus-telegram.service', events[stop])
         self.assertIn('nimbus-maintenance.service', events[stop])

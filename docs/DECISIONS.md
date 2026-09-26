@@ -1,8 +1,18 @@
 # Журнал решений cloud.nimbus
 
-Обновлено 26 сентября 2026 года. Ниже сначала приведены решения текущего локального E2EE-контура. Старые записи сохранены в отдельной исторической части; их Telegram/plaintext/recovery правила не переопределяют текущие решения. Production не развёрнут.
+Обновлено 27 сентября 2026 года. Ниже сначала приведены решения текущего E2EE-контура. Старые записи сохранены в отдельной исторической части; их Telegram/plaintext/recovery правила не переопределяют текущие решения. Публичный экземпляр развёрнут вручную; см. DEPLOY-002.
 
 ## Текущие решения
+
+### DEPLOY-002 — Ручной запуск без CI SSH-ключей
+
+- **Основание:** 27 сентября пользователь прямо разрешил развёртывание без отсутствующих CI credentials. Развёрнут backend `05f361793f546e580c2e9de0696761a446f226b8`, client `4722feb937ad64c288fad776696a605a3170ef39` после успешных verify/postgres jobs run `36272922363`.
+- **Состояние:** `nimbus.by → 13.143.141.139`, HTTPS :9443; :80/:443 перенаправляют на :9443. Сертификат Let's Encrypt, systemd renewal timer с проверкой Nginx перед reload. PostgreSQL peer/socket, приватный local storage, один Telegram polling worker, cleanup и local backup timers. Автоматический CD не настроен.
+- **Исправление запуска:** collectstatic наследует private upload permissions 0600/0700; после chown root:root WSGI не мог читать статику. В release controller статика теперь root:nimbus, файлы 0640 и каталоги 0750. App читает, но не изменяет code/static; media остаётся nimbus:nimbus 0700. Схема не откатывалась; после проверки миграций/readiness/WSGI maintenance снят.
+- **Сеть бота:** IPv6 Telegram timeout подтверждён; IPv4 работает. Службы web/polling получают отдельный read-only `/etc/gai.conf` с предпочтением IPv4. Глобальная сеть и TLS verification не ослаблены.
+- **Проверено:** HTTPS/redirect/CSRF/private media; 10 клиентских файлов и headers совпали с manifest; maintenance, согласованный backup, checksums, isolated restore initial DB (38 migrations, без аккаунтов/файлов), пять Telegram API checks. Полный live onboarding с настоящим Telegram/contact/passkey выполняет пользователь; эти checks его не заменяют.
+- **Ограничения:** один сервер, backups локальные и содержат серверные секреты; нет off-host DR/внешних alerts/load test. Real passkey provider sync не проверен. Runbook: [DEPLOYMENT.md](DEPLOYMENT.md).
+
 
 ### DB-001 — Явные блокировки без nullable outer joins
 
@@ -20,7 +30,7 @@
 
 ### DEPLOY-001 — Подготовленная single-host конфигурация
 
-- **Статус:** подготовлена локально, production пока не развёрнут.
+- **Статус:** первоначальная подготовка; актуальный ручной запуск описан в DEPLOY-002.
 - **Решение:** systemd, Gunicorn 1 worker/2 threads, Nginx HTTPS nimbus.by:9443, PostgreSQL и private local ciphertext; отдельный Telegram polling service. Go gateway не подключён. Release после CI и с pinned client gitlink.
 - **Отказы:** ошибка миграции оставляет maintenance; автоматический DB rollback запрещён. Старый backup восстанавливается только изолированно с актуальными tombstones/revocations; иначе публикация запрещена. [DEPLOYMENT.md](DEPLOYMENT.md).
 
@@ -288,6 +298,22 @@
 - Выбрать scheduler/worker для cleanup, rescan и purge.
 - Добавить централизованные метрики, tracing и alerting.
 - Провести отдельный security review и load test.
+
+## 2026-09-27: отказ несинхронизируемого passkey
+
+Яндекс Браузер предложил пользователю ключ только для текущего устройства. Backend отклоняет single-device credential кодом `synced_passkey_required`, а отсутствие backup state — `passkey_backup_required`. Клиент теперь объясняет эти ответы и показывает сообщение внутри onboarding-карточки, рядом с действием, даже после прокрутки. Подсказка предлагает другой способ сохранения. Требования PRF, BE=1 и BS=1 не меняются; поддержка конкретного менеджера и физическая синхронизация должны проверяться отдельно.
+
+## 2026-09-27: QR-код настройки TOTP
+
+Клиент строит otpauth URI для cloud.nimbus (TOTP SHA-1, 6 цифр, 30 секунд) и рисует QR локально на canvas через vendored qrcode-generator 2.0.4/MIT. Внешних QR API нет. Секрет доступен для ручного ввода в раскрывающейся секции; bitmap и поле очищаются при завершении настройки и блокировке/выходе. QR и seed маскируются на общих тестовых скриншотах; отдельный disposable synthetic QR используется только для проверки декодирования. Backend auth policy не меняется.
+
+## 2026-09-27: добровольный пропуск passkey
+
+Порядок настройки: OPAQUE-пароль → Telegram → passkey/PRF **или явное принятие риска** → обязательный TOTP. Белая кнопка «Пропустить» открывает диалог о невосстановимой потере файлов при потере пароля. Красная «Я принимаю риск» расположена выше фиолетовой «Вернуться к passkey»; отмена и Escape ничего не сохраняют.
+
+`POST /api/cypher/passkey/skip/ {"accept_risk":true}` доступен только на шаге passkey в действующей onboarding-сессии и при наличии активного vault. Сервер сохраняет `User.passkey_risk_accepted_at`; session возвращает `passkey_skipped`. Это исключение из прежнего требования обязательного passkey: без активного passkey согласие разрешает настройку TOTP и upload после завершения настройки. Telegram, TOTP, CSRF, owner/vault/quota и повторная проверка при публикации upload сохраняются. При наличии активного passkey по-прежнему нужны BE=1/BS=1; согласие не обходит BS=0. Разрушительный Telegram reset очищает согласие.
+
+Без passkey забытый пароль нельзя заменить с сохранением файлов; Telegram/TOTP не восстанавливают ключи. Разрушительный сброс остаётся способом создать пустое хранилище. Изменение реализовано локально; его наличие на публичном сервере требует отдельного deployment с миграцией.
 
 
 ## 2026-09-27: passkey на внешнем устройстве

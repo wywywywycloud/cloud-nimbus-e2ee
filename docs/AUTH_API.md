@@ -17,7 +17,7 @@
 
 OPAQUE `/login/start/ {username,startLoginRequest}` и `/login/finish/ {challenge,finishLoginRequest}`: если TOTP уже подключён, всегда возвращается `{second_factor_required:true,method:"totp",challenge}`. `/api/otp/login/finish/ {challenge,code}` выдаёт сессию. Если настройка не завершена и TOTP ещё нет, OPAQUE возобновляет только onboarding. Старые email challenges отвергаются. TOTP counter одноразовый, challenge связан с сессией, credential version и auth hash; максимум пять попыток, срок пять минут.
 
-Passkey `/login/start/ {}` использует discoverable credential; опционально `{username}`. `/login/finish/` требует WebAuthn UV, origin/RP/signature и user binding. PRF остаётся на клиенте. После потери BS=1 уже активный passkey разрешает чтение, но `upload_ready:false`. Upload повторно проверяет Telegram, TOTP, активный конверт текущего vault с BE=1/BS=1, owner и квоту внутри транзакции публикации. Флаги `PASSKEY_REQUIRED=0` и `LOGIN_SECOND_FACTOR_REQUIRED=0` не отключают эти проверки.
+Passkey `/login/start/ {}` использует discoverable credential; опционально `{username}`. `/login/finish/` требует WebAuthn UV, origin/RP/signature и user binding. PRF остаётся на клиенте. После потери BS=1 уже активный passkey разрешает чтение, но `upload_ready:false`. Upload повторно проверяет Telegram, TOTP, активный конверт текущего vault с BE=1/BS=1 либо принятое исключение без активного passkey, owner и квоту внутри транзакции публикации. Флаги `PASSKEY_REQUIRED=0` и `LOGIN_SECOND_FACTOR_REQUIRED=0` не отключают эти проверки.
 
 ## Смена пароля и разрушительный сброс
 
@@ -30,3 +30,11 @@ Passkey `/login/start/ {}` использует discoverable credential; опц�
 ## Эксплуатация
 
 Нужен Telegram bot (`TELEGRAM_ENABLED=1`, token и username вне репозитория). Недоступный бот закрывает onboarding с 503; обхода через email нет. Polling и webhook используют тот же обработчик; webhook проверяет secret header. Локальные тесты заменяют отправку сообщений mocks; test-only capture нельзя включать в production.
+
+## 2026-09-27: добровольный пропуск passkey
+
+Порядок настройки: OPAQUE-пароль → Telegram → passkey/PRF **или явное принятие риска** → обязательный TOTP. Белая кнопка «Пропустить» открывает диалог о невосстановимой потере файлов при потере пароля. Красная «Я принимаю риск» расположена выше фиолетовой «Вернуться к passkey»; отмена и Escape ничего не сохраняют.
+
+`POST /api/cypher/passkey/skip/ {"accept_risk":true}` доступен только на шаге passkey в действующей onboarding-сессии и при наличии активного vault. Сервер сохраняет `User.passkey_risk_accepted_at`; session возвращает `passkey_skipped`. Это исключение из прежнего требования обязательного passkey: без активного passkey согласие разрешает настройку TOTP и upload после завершения настройки. Telegram, TOTP, CSRF, owner/vault/quota и повторная проверка при публикации upload сохраняются. При наличии активного passkey по-прежнему нужны BE=1/BS=1; согласие не обходит BS=0. Разрушительный Telegram reset очищает согласие.
+
+Без passkey забытый пароль нельзя заменить с сохранением файлов; Telegram/TOTP не восстанавливают ключи. Разрушительный сброс остаётся способом создать пустое хранилище. Изменение реализовано локально; его наличие на публичном сервере требует отдельного deployment с миграцией.

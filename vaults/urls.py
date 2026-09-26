@@ -5,6 +5,7 @@ from . import views
 app_name = "vaults"
 
 urlpatterns = [
+    path("passkey/skip/", views.skip_passkey, name="skip_passkey"),
     path("session/", views.session, name="session"),
     path("vault/", views.create_vault, name="create_vault"),
     path("files/", views.files, name="files"),
