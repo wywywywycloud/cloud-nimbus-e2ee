@@ -371,3 +371,8 @@ class PasskeyTests(TestCase):
     def test_email_payloads_are_rejected(self):
         for route in ('login/start', 'reset/start'):
             self.assertEqual(self.post(route, {'email': self.user.email}).status_code, 401)
+
+    def test_active_credential_without_vault_never_authenticates(self):
+        credential = self.activate()
+        PasskeyCredential.objects.filter(pk=credential.pk).update(vault=None)
+        self.assertEqual(self.login()[0].status_code, 401)

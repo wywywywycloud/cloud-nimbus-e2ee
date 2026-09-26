@@ -4,6 +4,12 @@
 
 ## Текущие решения
 
+### DB-001 — Явные блокировки без nullable outer joins
+
+- PostgreSQL 18 CI run 36272093384 обнаружил реальный отказ `FOR UPDATE cannot be applied to nullable side of outer join` в passkey login и legacy удалениях файла/папки; успешный SQLite-прогон этого не выявлял.
+- Исправление сохраняет блокировки конкретных записей без nullable `select_related`: user → vault → credential для passkey; user → файл/папка для удаления. Проверки owner и revoked vault сохраняются; отсутствующий vault отвергается.
+- Реальный PostgreSQL CI должен пройти повторно; локальный SQLite не считается подтверждением PostgreSQL-совместимости.
+
 ### AUTH-003 — Обязательный Telegram → passkey → TOTP, без email
 
 - **Решение пользователя 26 сентября 2026:** username и OPAQUE-пароль, затем Telegram, затем passkey/PRF и TOTP. Email-вход/verification/recovery удалены из доступных маршрутов. AUTH-001/002, TG-007 и email-часть RECOVERY-001 ниже сохранены как история предыдущего решения и переопределены этой записью.

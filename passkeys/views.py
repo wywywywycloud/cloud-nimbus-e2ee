@@ -327,13 +327,16 @@ def login_finish(request):
         return _error()
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=candidate.user_id)
-        credential = PasskeyCredential.objects.select_for_update().filter(pk=candidate.pk, active=True, vault__revoked_at__isnull=True).select_related("vault").first()
-        if not _available(user) or credential is None or credential.vault.owner_id != user.pk:
+        # Lock concrete rows in the same user -> vault -> credential order as activation.
+        # A nullable vault FK must never introduce an outer join into FOR UPDATE.
+        vault = Vault.objects.select_for_update().filter(pk=candidate.vault_id, owner=user, revoked_at__isnull=True).first()
+        credential = PasskeyCredential.objects.select_for_update().filter(pk=candidate.pk, user=user, active=True, vault_id=candidate.vault_id).first()
+        if not _available(user) or vault is None or credential is None:
             return _error()
         if expected_user is not None and not hmac.compare_digest(payload["auth_hash"], user.get_session_auth_hash()):
             return _error()
         _verify_assertion(credential, response, payload, user)
-        vault_data = {"id": str(credential.vault_id), "version": credential.vault.version, "wrapped_key": credential.wrapped_key}
+        vault_data = {"id": str(credential.vault_id), "version": vault.version, "wrapped_key": credential.wrapped_key}
         from accounts.onboarding import begin
         begin(request, user, full=True)
         request.session["passkey_recent_auth"] = {"user_id": user.pk, "authenticated_at": timezone.now().timestamp()}

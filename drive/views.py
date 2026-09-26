@@ -162,7 +162,8 @@ def rename_folder(request, pk):
 def delete_folder(request, pk):
     parent = None
     with transaction.atomic():
-        item = get_object_or_404(Folder.objects.select_for_update().select_related("parent"), pk=pk, owner=request.user)
+        user = User.objects.select_for_update().get(pk=request.user.pk)
+        item = get_object_or_404(Folder.objects.select_for_update(), pk=pk, owner=user)
         parent = item.parent
         if item.children.exists() or item.stored_files.exists():
             messages.error(request, "Удалить можно только пустую папку.")
@@ -291,9 +292,9 @@ def favorite(request, pk):
 def delete(request, pk):
     parent = None
     with transaction.atomic():
-        item = get_object_or_404(StoredFile.objects.select_for_update().select_related("folder"), pk=pk, owner=request.user)
-        parent = item.folder
         user = User.objects.select_for_update().get(pk=request.user.pk)
+        item = get_object_or_404(StoredFile.objects.select_for_update(), pk=pk, owner=user)
+        parent = item.folder
         size = item.size
         blob = item.blob
         item.delete()
