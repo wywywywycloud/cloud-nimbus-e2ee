@@ -199,6 +199,8 @@ try {
   await page.locator('#preview-text').waitFor({state: 'visible'});
   assert.equal(await page.locator('#preview-code').textContent(), plaintext.toString());
   await page.keyboard.press('Escape');
+  // The dialog's close event is queued by the browser after the key event.
+  await page.waitForFunction(() => document.querySelector('#preview-code').textContent === '');
   assert.equal(await page.locator('#preview-code').textContent(), '');
   const codeName = 'preview.ts';
   const codeText = '// Пример кода\nconst message: string = "Привет";\nconsole.log(message);\n'.repeat(80);
