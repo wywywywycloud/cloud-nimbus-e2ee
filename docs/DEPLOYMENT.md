@@ -1,3 +1,154 @@
+# Cloud Nimbus: публичный HTTPS без порта, внутренний TLS на loopback
+
+## Применено на сервере 27 сентября 2026 года, 00:35 UTC
+
+Проверено: https://nimbus.by/ → 308 https://cloud.nimbus.by/ → 302 /vault/ → 200.
+https://cloud.nimbus.by/vault/ открывается в реальном браузере без порта.
+DNS Hoster.by уже содержит две A-записи на 13.143.141.139; изменения не требовались.
+
+Фактическая схема:
+
+```text
+Браузер: https://nimbus.by или https://cloud.nimbus.by (стандартный HTTPS)
+  → rw-core / VLESS REALITY :443 (действующая VPN-служба)
+  → REALITY target 127.0.0.1:9443 (был настроен до исправления)
+  → Nginx TLS/HTTP2, только 127.0.0.1:9443
+  → Gunicorn 127.0.0.1:8000
+```
+
+Обычный TLS-трафик передаётся в target согласно механизму
+[REALITY](https://xtls.github.io/en/config/transports/reality.html).
+Nimbus не занимает 80/443, прямой внешний 9443 остаётся недоступен.
+Основной origin — https://cloud.nimbus.by, RP ID — nimbus.by.
+
+Точечно изменены `config/production.py` в активном release 4a522983a9ffef26fc019a08eabf0efe05d8cb07,
+`/etc/nginx/sites-available/nimbus` и только PASSKEY_ORIGIN в `/etc/nimbus/runtime.env`.
+Root-only backup: `/opt/nimbus/hotfix-backups/20260927T003453Z-origin-no-port`.
+Сохранены остальные env/секреты, БД, пользовательские файлы и все клиентские байты,
+включая server-only logout hotfix и manifest. Полный релиз не выполнялся; Git не
+опубликован. Перед будущим релизом перенести оба server-only исправления в
+согласованный код, не затереть logout hotfix.
+
+Gunicorn перезапущен. Reload Nginx не смог заменить wildcard listener на loopback
+(`bind: Address already in use`), поэтому после `nginx -t` выполнен restart только
+Nginx. Подтверждён единственный listener 127.0.0.1:9443. Процесс rw-core с PID 11481
+и контейнер remnanode не перезапускались и не перенастраивались. Это проверка
+сохранности процесса и конфигурации, не отдельный end-to-end тест VPN-клиента.
+
+В изолированной Linux-копии под nimbus-build с синтетическими данными прошли:
+148 Django tests, 4 Nginx tests, 4 release-flow tests, полный ci/check_deployment.py,
+makemigrations --check --dry-run и Django check. На live прошли production check
+и deployment_check, public health/vault/session, private media 404, anonymous
+files 401. Отдельная анонимная сессия подтвердила logout POST с новым origin,
+отказ 403 для старого origin :9443 и чужого домена. SHA256 публичного app.js
+совпал с сохранённым до изменения server-only hotfix. Реальный пользовательский
+passkey и полный браузерный onboarding в этой задаче не выполнялись.
+
+Продление сертификата не менялось: текущий срок подтверждён до 25 декабря 2026.
+Нужен DNS-01 или отдельный внешний HTTP-01 обработчик; Nimbus не открывает 80/443.
+Работоспособность сайта сейчас не означает исправленного автоматического renewal.
+
+
+## Проектная схема и инструкция применения
+
+Целевой адрес — https://cloud.nimbus.by/vault/. Nimbus Nginx слушает только
+`127.0.0.1:9443`, Gunicorn — `127.0.0.1:8000`. Listener на 80/443 и IPv6 wildcard
+в проекте отсутствуют. Внешняя служба на 443 должна передавать TLS на этот
+loopback listener (или проксировать HTTPS с проверкой сертификата и SNI
+cloud.nimbus.by). Это внешняя зависимость: текущий target подтверждён при live-проверке выше;
+конфигурация VPN в этой задаче не менялась.
+
+Nginx сравнивает `$host` с cloud.nimbus.by. Правильный домен без порта не получает
+редирект на 9443; другой hostname получает 308 на https://cloud.nimbus.by с теми
+же path/query. `/` возвращает относительный `/vault/`. Proxy задаёт Host без
+порта и X-Forwarded-Proto=https, перезаписывает forwarded headers. CSRF и WebAuthn
+проверяют один точный публичный origin. `config.production` требует HTTPS без
+явно указанного порта (`urlsplit(...).port is None`), включая отказ старому :9443.
+
+HTTP/2 включён параметром `listen ... ssl http2` для совместимости с Nginx 1.24
+в Ubuntu 24.04 CI. На Nginx >=1.25.1 эквивалентны `listen 127.0.0.1:9443 ssl;`
+и отдельное `http2 on;` ([документация Nginx](https://nginx.org/en/docs/http/ngx_http_v2_module.html)).
+
+## Применение после отдельного решения о deployment
+
+1. Проверить фактический release, Nginx, владельцев портов и внешний маршрут
+   443 → 127.0.0.1:9443. Не останавливать чужую службу на 443. Сохранить backup
+   текущей конфигурации вне Git. Сначала учесть server-only logout hotfix
+   в app.js/manifest: полный релиз из Git может его затереть.
+2. Подставить LEGACY_DOMAIN=nimbus.by, затем DOMAIN=cloud.nimbus.by в
+   `deploy/nginx.conf.template`. Проверить весь `nginx -T`: Nimbus не должен
+   добавлять listener на 80/443 или публичный 9443.
+3. В существующем `/etc/nimbus/runtime.env` заменить только публичные параметры
+   из `deploy/public-origin.env.example`:
+
+   ```sh
+   PASSKEY_ORIGIN=https://cloud.nimbus.by
+   PASSKEY_RP_ID=nimbus.by
+   DJANGO_ALLOWED_HOSTS=cloud.nimbus.by
+   ```
+
+   Сохранить OPAQUE setup, Django secret и остальные значения. Не заменять весь
+   runtime.env коротким фрагментом. Миграции данных для этой правки не нужны.
+4. Согласованно применить production.py, env и Nginx; проверить `nginx -t`, затем
+   restart `nimbus.service` (Gunicorn). При смене wildcard listener на loopback
+   нужен restart Nginx: одного reload может быть недостаточно. Проверить listener
+   через `ss` и фактический HTTP 200, а не только успешный systemctl reload.
+5. Снаружи проверить health/vault/session, отсутствие :9443 в Location,
+   `/media/` → 404, регистрацию/CSRF и вход существующим passkey на новом origin.
+   RP ID остаётся прежним; credentials и PRF input не меняются. Реальный passkey
+   требует отдельной проверки, которую локальные тесты не заменяют.
+
+## Сертификат без занятия 80/443 проектом
+
+По историческому срезу сертификат действует до 25 декабря 2026 года; текущий
+срок перед deployment нужно проверить. Старый HTTP-01/webroot renewal не
+исправляется этой правкой. HTTP-01 требует внешнего порта 80; 9443 его не заменяет
+([Let's Encrypt](https://letsencrypt.org/docs/challenge-types/)).
+
+Нужны автоматизированный DNS-01 с доступом к DNS API либо отдельный внешний
+обработчик HTTP-01 на 80, которым управляет другая служба. Nimbus не добавляет
+блок `listen 80`, не запускает standalone certbot и не занимает 443 для ACME.
+DNS API/внешний обработчик в этой задаче не настроены. После настройки выбранного
+способа выполнить на сервере `certbot renew --dry-run` и проверить deploy hook
+`nginx -t` + reload. Здесь dry-run и выпуск сертификата не выполнялись.
+
+## Локальные проверки
+
+`ci/test_nginx.py` проверяет единственный loopback listener, отсутствие редиректа
+для публичного Host, redirect другого hostname без порта с сохранением URI,
+закрытый media и замену forwarded headers. `ci/check_deployment.py` проверяет
+origin без порта, parent RP и отказ неверным origin/host/RP. `ci/test_release.py`
+проверяет health Host без порта. Результаты новой проверки не следует подменять
+историческими результатами ниже.
+
+---
+
+## Результаты локальной проверки на Windows
+
+- `manage.py makemigrations --check --dry-run` и `manage.py check` прошли.
+- Production guards из `ci.check_deployment.check_production` прошли отдельно
+  с синтетическим setup, без Linux readiness: HTTPS redirect без порта, CSRF
+  для нового origin, отказ старому origin/чужому домену и настройки host/RP.
+- `manage.py test passkeys`: 29 тестов прошли, включая регистрацию/активацию
+  на origin с :9443 и вход тем же credential после удаления порта; assertion
+  со старым origin отклоняется, прежний encrypted wrapper сохранён.
+- Общий `manage.py test` до добавления нового passkey-теста: найдено 147,
+  выполнено 118; 3 ошибки. Один legacy file-flow тест не может удалить открытый
+  файл в Windows (WinError 32); setup классов OPAQUE и TOTP завершается
+  OpaqueUnavailable из-за pipe/selectors bridge. Код этих компонентов не менялся.
+- Полный `ci/check_deployment.py` не подтверждён: Bash отсутствует; при отдельном
+  запуске Python-части readiness останавливается на том же OPAQUE bridge.
+- `ci/test_nginx.py` не запустил сценарии: нет OpenSSL CLI и Nginx. Linux release
+  fault tests не запускались без Bash. `scripts/test_e2ee.py` запустил временный
+  Django стенд, но остановился на отсутствии Playwright Chromium.
+
+Полный Linux CI, реальный Nginx, внешний ingress, вход с физическим passkey и
+Certbot renewal этой локальной проверкой не подтверждены.
+
+## История до локальной правки
+
+Следующие записи сохранены как исторический срез, а не инструкция к применению.
+
 # Cloud Nimbus: HTTPS только на 9443
 
 Текущий публичный адрес — [https://cloud.nimbus.by:9443/vault/](https://cloud.nimbus.by:9443/vault/).

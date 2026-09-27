@@ -1,5 +1,15 @@
 # Эксплуатация cloud.nimbus E2EE
 
+## Live-обновление 27 сентября 2026 года
+
+Схема без порта применена на сервере: оба домена через существующий REALITY target VPN-службы на 443 приходят в Nginx 127.0.0.1:9443; основной origin https://cloud.nimbus.by. VPN не перенастраивался. Пройдены 148 Django и proxy/deployment проверки, публичный сайт открыт в браузере. Ниже прежние локальные статусы сохранены как история; актуальный runbook, backup и ограничения — [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## 2026-09-27: локальная правка адреса без порта
+
+Локальная конфигурация переведена на PASSKEY_ORIGIN=https://cloud.nimbus.by, PASSKEY_RP_ID=nimbus.by и DJANGO_ALLOWED_HOSTS=cloud.nimbus.by. Nginx слушает только 127.0.0.1:9443. Применение env и перезапуск служб на сервере не выполнялись. Перед deployment нужен внешний TLS ingress; для renewal — DNS-01 или внешний HTTP-01 обработчик. Runbook: [DEPLOYMENT.md](DEPLOYMENT.md).
+
+Ниже сохранён предшествующий контекст; эта запись переопределяет прежнюю схему публичного :9443.
+
 ## Статус
 
 Публичный экземпляр работает на https://cloud.nimbus.by:9443 с 27 сентября 2026 года: Nginx, Gunicorn, PostgreSQL и приватное локальное хранилище. Развёрнут вручную без GitHub Actions SSH credentials; состояние и runbook — в [DEPLOYMENT.md](DEPLOYMENT.md). Новый клиент — `/vault/`, backend — Django. Go gateway не подключён. Telegram обязателен после OPAQUE-регистрации; затем предлагается passkey (можно пропустить с принятием риска) и настраивается обязательный TOTP. Passkey/PRF и разрушительный Telegram reset реализуются как рабочий прототип; реальная межустройственная синхронизация ещё не проверена. OPAQUE-вход дополнительно подтверждается обязательным TOTP. TOTP не является ключом файлов.
