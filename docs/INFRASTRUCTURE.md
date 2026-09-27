@@ -1,5 +1,15 @@
 # Архитектура cloud.nimbus / cloud-cypher
 
+## Live-обновление 27 сентября 2026 года
+
+Схема без порта применена на сервере: оба домена через существующий REALITY target VPN-службы на 443 приходят в Nginx 127.0.0.1:9443; основной origin https://cloud.nimbus.by. VPN не перенастраивался. Пройдены 148 Django и proxy/deployment проверки, публичный сайт открыт в браузере. Ниже прежние локальные статусы сохранены как история; актуальный runbook, backup и ограничения — [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## 2026-09-27: локальная правка адреса без порта
+
+Публичный origin отделён от внутреннего TLS listener: https://cloud.nimbus.by → внешняя служба 443 → Nginx 127.0.0.1:9443 → Gunicorn 127.0.0.1:8000. Только внешний ingress владеет 443. Nginx нормализует Host без порта; production/CSRF/WebAuthn используют этот точный origin. RP ID nimbus.by сохраняется. Это локальная конфигурация, не подтверждение live-состояния.
+
+Ниже сохранён предшествующий контекст; эта запись переопределяет прежнюю схему публичного :9443.
+
 ## Статус и граница проектов
 
 E2EE MVP развёрнут вручную на https://cloud.nimbus.by:9443 27 сентября 2026 года. Это публичный прототип, а не подтверждение независимого security review или физической синхронизации passkey. См. [DEPLOYMENT.md](DEPLOYMENT.md). [cloud-nimbus-e2ee](https://github.com/wywywywycloud/cloud-nimbus-e2ee) содержит Django backend под LGPL-3.0-or-later. [cloud-cypher](https://github.com/wywywywycloud/cloud-cypher) — отдельный клиент под Apache-2.0; vendored OPAQUE сохраняет свою MIT-лицензию. Старый Telegram/plaintext MVP остаётся историей и совместимостью, а не текущим описанием нового файлового потока.

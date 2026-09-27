@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the actual 9443-only Nginx template with disposable TLS and high ports."""
+"""Exercise the loopback TLS ingress with disposable certificates and high ports."""
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -70,11 +70,9 @@ class ProxyTests(unittest.TestCase):
                 '-extfile', 'server.ext')
         (cls.root/'cert.pem').write_bytes((cls.root/'leaf.pem').read_bytes() + (cls.root/'issuer.pem').read_bytes() + (cls.root/'intermediate.pem').read_bytes())
         template = (ROOT/'deploy/nginx.conf.template').read_text()
-        # Remove IPv6 listeners only for this portable isolated test.
-        template = '\n'.join(line for line in template.splitlines() if 'listen [::]' not in line)
         for source, target in (
             ('LEGACY_DOMAIN', 'nimbus.test'), ('DOMAIN', 'cloud.nimbus.test'),
-            ('listen 9443 ssl;', f'listen 127.0.0.1:{cls.backend} ssl;'),
+            ('listen 127.0.0.1:9443 ssl http2;', f'listen 127.0.0.1:{cls.backend} ssl http2;'),
             ('127.0.0.1:8000', f'127.0.0.1:{cls.echo.server_port}'),
             ('/etc/letsencrypt/live/cloud.nimbus.test/fullchain.pem', str(cls.root/'cert.pem')),
             ('/etc/letsencrypt/live/cloud.nimbus.test/privkey.pem', str(cls.root/'key.pem')),
@@ -120,35 +118,38 @@ class ProxyTests(unittest.TestCase):
         return result
 
     def test_canonical_entry_and_private_media(self):
-        status, headers, _ = self.request(self.backend, 'cloud.nimbus.test:9443')
-        self.assertEqual(status, 302)
-        self.assertEqual(headers['Location'], '/vault/')
-        self.assertEqual(self.request(self.backend, 'cloud.nimbus.test:9443', '/media/private')[0], 404)
+        for host in ('cloud.nimbus.test', 'cloud.nimbus.test:443'):
+            with self.subTest(host=host):
+                status, headers, _ = self.request(self.backend, host)
+                self.assertEqual(status, 302)
+                self.assertEqual(headers['Location'], '/vault/')
+                status, headers, _ = self.request(self.backend, host, '/vault/?next=a%2Fb')
+                self.assertEqual(status, 200)
+                self.assertNotIn('Location', headers)
+                self.assertEqual(self.request(self.backend, host, '/media/private')[0], 404)
 
-    def test_only_9443_is_configured(self):
+    def test_only_loopback_9443_is_configured(self):
         templates = '\n'.join(p.read_text() for p in (ROOT/'deploy').glob('nginx*.template'))
         listeners = re.findall(r'^\s*listen\s+([^;]+);', templates, re.MULTILINE)
-        self.assertCountEqual(listeners, ['9443 ssl', '[::]:9443 ssl'])
+        self.assertCountEqual(listeners, ['127.0.0.1:9443 ssl http2'])
         for port in (self.http, self.https):
             with self.subTest(port=port), self.assertRaises(OSError):
                 socket.create_connection(('127.0.0.1', port), timeout=.2)
 
-    def test_noncanonical_authority_redirect_preserves_port_and_uri(self):
-        # A TLS forwarding service can reach 9443 with a browser Host lacking
-        # the port. Redirect GETs before serving a form on the wrong CSRF origin.
-        for host in ('nimbus.test:9443', 'cloud.nimbus.test', 'cloud.nimbus.test:443'):
+    def test_noncanonical_host_redirect_preserves_uri_without_port(self):
+        for host in ('nimbus.test', 'nimbus.test:9443', 'untrusted.test'):
             with self.subTest(host=host):
                 status, headers, _ = self.request(self.backend, host, '/vault/?next=a%2Fb')
                 self.assertEqual(status, 308)
-                self.assertEqual(headers['Location'], 'https://cloud.nimbus.test:9443/vault/?next=a%2Fb')
+                self.assertEqual(headers['Location'], 'https://cloud.nimbus.test/vault/?next=a%2Fb')
 
     def test_direct_proxy_preserves_origin_and_replaces_untrusted_headers(self):
-        status, _, body = self.request(self.backend, 'cloud.nimbus.test:9443', '/api/cypher/session/',
+        status, _, body = self.request(self.backend, 'cloud.nimbus.test', '/api/cypher/session/',
                                       {'X-Forwarded-Proto':'http', 'X-Real-IP':'203.0.113.8',
                                        'X-Forwarded-For':'203.0.113.9'})
         self.assertEqual(status, 200)
         headers = json.loads(body)
-        self.assertEqual(headers['Host'], 'cloud.nimbus.test:9443')
+        self.assertEqual(headers['Host'], 'cloud.nimbus.test')
         self.assertEqual(headers['X-Forwarded-Proto'], 'https')
         self.assertEqual(headers['X-Real-IP'], '127.0.0.1')
         self.assertEqual(headers['X-Forwarded-For'], '127.0.0.1')

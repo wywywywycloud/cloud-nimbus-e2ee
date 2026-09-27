@@ -138,6 +138,30 @@ class PasskeyTests(TestCase):
         self.assertEqual(options["extensions"], {"prf": {"eval": {"first": b64(PRF_SALT)}}})
         self.assertEqual(len(base64.urlsafe_b64decode(options["user"]["id"] + "=")), 32)
 
+    def test_existing_passkey_survives_removing_origin_port_with_same_rp(self):
+        old_origin = "https://testserver:9443"
+        with override_settings(PASSKEY_ORIGIN=old_origin):
+            options = self.post("register/start", {}).json()
+            response = self.post("register/finish", {
+                "challenge": options["challenge"],
+                "credential": self.authenticator.register(options, origin=old_origin),
+            })
+            self.assertEqual(response.status_code, 201, response.content)
+            credential_id = response.json()["id"]
+            options = self.post("activate/start", {"credential_id": credential_id}).json()
+            response = self.post("activate/finish", {
+                "challenge": options["challenge"],
+                "credential": self.assertion(options, origin=old_origin),
+                "vault_id": str(self.vault.pk), "wrapped_key": encrypted(),
+            })
+            self.assertEqual(response.status_code, 200, response.content)
+        # Same signed credential and encrypted wrapper, new exact origin.
+        response, _ = self.login()
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["vault"]["wrapped_key"], encrypted())
+        response, _ = self.login(origin=old_origin)
+        self.assertEqual(response.status_code, 401)
+
     def test_recent_opaque_version_and_authenticated_user_required(self):
         self.assertEqual(self.post("register/start", {}, client=Client()).status_code, 401)
         OpaqueCredential.objects.filter(user=self.user).update(version=2)
