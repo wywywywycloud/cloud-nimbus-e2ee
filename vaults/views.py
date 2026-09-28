@@ -68,6 +68,9 @@ def _file_data(item):
         "id": str(item.pk),
         "vault_id": str(item.vault_id),
         "metadata": item.metadata,
+        "parent_id": str(item.parent_id) if item.parent_id else None,
+        "starred": item.starred,
+        "trashed_at": item.trashed_at.isoformat() if item.trashed_at else None,
         "ciphertext_bytes": item.ciphertext_bytes,
         "created_at": item.created_at.isoformat(),
     }
@@ -143,7 +146,7 @@ def files(request):
 
 def _upload(request):
     try:
-        if set(request.POST) - {"vault_id", "id", "metadata", "csrfmiddlewaretoken"} or set(request.FILES) != {"file"}:
+        if set(request.POST) - {"vault_id", "id", "metadata", "parent_id", "csrfmiddlewaretoken"} or set(request.FILES) != {"file"}:
             raise ValueError("invalid_upload")
         if any(len(request.POST.getlist(field)) != 1 for field in ("vault_id", "id", "metadata")) or len(request.FILES.getlist("file")) != 1:
             raise ValueError("invalid_upload")
@@ -153,6 +156,7 @@ def _upload(request):
         if len(raw_metadata.encode()) > MAX_METADATA_BYTES:
             raise ValueError("metadata_too_large")
         metadata = envelope(json.loads(raw_metadata))
+        parent_id = uuid_value(request.POST["parent_id"]) if request.POST.get("parent_id") else None
         incoming = request.FILES["file"]
         if incoming.size < 16 or incoming.size > MAX_CIPHERTEXT_BYTES:
             return _error("invalid_ciphertext_size", 413)
@@ -204,7 +208,13 @@ def _upload(request):
                 if pending is None:
                     response = _error("upload_expired", 409)
                 else:
-                    item = CipherFile.objects.create(id=file_id, vault=vault, metadata=metadata, ciphertext_bytes=incoming.size, storage_key=storage_key)
+                    from .organize import live_parent
+                    try:
+                        parent = live_parent(vault, str(parent_id) if parent_id else None)
+                    except ValueError:
+                        queue_blob_deletion(storage_key)
+                        return _error("invalid_parent", 409)
+                    item = CipherFile.objects.create(id=file_id, vault=vault, parent=parent, metadata=metadata, ciphertext_bytes=incoming.size, storage_key=storage_key)
                     user.used_bytes += incoming.size
                     user.save(update_fields=["used_bytes"])
                     pending.delete()
@@ -223,6 +233,13 @@ def download(request, file_id):
     item = CipherFile.objects.filter(pk=file_id, vault__owner=request.user, vault__revoked_at__isnull=True).first()
     if item is None:
         return _error("file_not_found", 404)
+    from .organize import live_parent
+    try:
+        if item.trashed_at:
+            raise ValueError()
+        live_parent(item.vault, str(item.parent_id) if item.parent_id else None)
+    except ValueError:
+        return _error("file_in_trash", 409)
     try:
         handle = default_storage.open(item.storage_key, "rb")
     except FileNotFoundError:
@@ -275,6 +292,8 @@ def reset(request):
         vault.wrapped_key = {}
         vault.save(update_fields=["revoked_at", "wrapped_key"])
         vault.files.all().delete()
+        vault.folders.update(parent=None)
+        vault.folders.all().delete()
         PasskeyCredential.objects.filter(user=user, vault=vault).delete()
         user.used_bytes = max(0, user.used_bytes - released)
         user.save(update_fields=["used_bytes"])

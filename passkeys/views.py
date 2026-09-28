@@ -25,7 +25,7 @@ from webauthn.helpers.structs import AuthenticatorSelectionCriteria, CredentialD
 
 from core.audit import allow_action, audit, client_ip
 from opaque_auth.models import OpaqueChallenge, OpaqueCredential
-from vaults.models import CipherFile, Vault
+from vaults.models import CipherFile, CipherFolder, Vault
 from vaults.validation import envelope, uuid_value
 
 from .models import PasskeyChallenge, PasskeyCredential, PasskeyIdentity, PasskeyReset
@@ -407,6 +407,7 @@ def reset_finish(request):
         released = CipherFile.objects.filter(vault__owner=user).aggregate(total=Sum("ciphertext_bytes"))["total"] or 0
         vaults.update(revoked_at=timezone.now(), wrapped_key={})
         CipherFile.objects.filter(vault__owner=user).delete()
+        CipherFolder.objects.filter(vault__owner=user).delete()
         PasskeyCredential.objects.filter(user=user).delete()
         PasskeyChallenge.objects.filter(user=user).delete()
         OpaqueChallenge.objects.filter(user=user).delete()

@@ -1,5 +1,6 @@
 // Synthetic browser integration tests. No real account/profile is used.
 import assert from 'node:assert/strict';
+import {organizationChecks} from './browser_organization.mjs';
 import {createRequire} from 'node:module';
 import {readFile, writeFile, mkdir, readdir} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -60,7 +61,7 @@ async function screenshots(label) {
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({width, height: 900});
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `layout overflow ${label}/${theme}/${width}`);
-      await page.screenshot({path: join(reports, 'screenshots', `${label}-${theme}-${width}.png`), fullPage: true, mask: [page.locator('#totp-qr'), page.locator('#totp-secret')]});
+      await page.screenshot({path: join(reports, 'screenshots', `${label}-${theme}-${width}.png`), fullPage: true, animations: 'disabled', mask: [page.locator('#totp-qr'), page.locator('#totp-secret'), page.locator('#rotate-qr'), page.locator('#rotate-secret')]});
     }
   }
   await page.setViewportSize({width: 1280, height: 900});
@@ -244,12 +245,39 @@ try {
       for (const width of [1280, 390, 320]) {
         await page.setViewportSize({width, height: 900});
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `layout overflow ${view}/${theme}/${width}`);
-        await page.screenshot({path: join(reports, 'screenshots', `${view}-${theme}-${width}.png`), fullPage: true});
+        await page.screenshot({path: join(reports, 'screenshots', `${view}-${theme}-${width}.png`), fullPage: true, animations: 'disabled'});
       }
     }
   }
   await page.setViewportSize({width: 1280, height: 900});
   record('list/grid, light/dark and widths 1280/390/320 have no horizontal overflow');
+  await organizationChecks({page, record, screenshots, download, sha, filename, plaintext});
+  await page.locator('#settings-button').click();
+  await screenshots('settings');
+  await page.locator('#rotate-open-button').click();
+  await page.locator('#rotate-old-code').fill(await nextTotp());
+  await page.locator('#rotate-start-form button[type=submit]').click();
+  await page.locator('#rotate-finish-form').waitFor({state:'visible'});
+  const replacementSecret = await page.locator('#rotate-secret').inputValue();
+  assert.notEqual(replacementSecret, totpSecret);
+  await screenshots('totp-reissue');
+  totpSecret = replacementSecret; previousCode = '';
+  await page.locator('#rotate-new-code').fill(await nextTotp());
+  await page.locator('#rotate-finish-form button[type=submit]').click();
+  await page.locator('#rotate-dialog').waitFor({state:'hidden'});
+  assert.equal(await page.locator('#rotate-secret').inputValue(), '');
+  assert.equal(await page.locator('#rotate-qr').getAttribute('width'), '0');
+  assert.equal(sha(await download(page, filename)), sha(plaintext));
+  record('settings TOTP reissue confirms new seed, clears QR and preserves encrypted files');
+  await page.locator('#settings-button').click();
+  await page.locator('#rotate-open-button').click();
+  await page.locator('#rotate-passkey-button').click();
+  await page.locator('#rotate-finish-form').waitFor({state:'visible'});
+  assert.notEqual(await page.locator('#rotate-secret').inputValue(), totpSecret);
+  await page.locator('[data-close-dialog="rotate-dialog"]').click();
+  await page.waitForFunction(() => document.querySelector('#rotate-secret').value === '');
+  record('lost TOTP route uses fresh passkey proof; cancelling pending replacement keeps current TOTP');
+  await page.locator('#settings-button').click();
   await page.locator('#password-settings-button').click();
   await page.locator('#current-password').fill(passwords[0]);
   await page.locator('#new-password').fill(passwords[1]);
@@ -361,7 +389,7 @@ try {
   await writeFile(join(reports, 'browser-e2e.json'), JSON.stringify({status: 'passed', browser: await browser.version(), checks,
     limits: ['Synthetic Chrome virtual authenticator, not actual Apple/Google cloud synchronization.', 'No independent security audit or production load test.', 'Screenshots and input files contain synthetic data only.']}, null, 2) + '\n');
 } catch (error) {
-  await page.screenshot({path: join(reports, 'browser-failure.png'), fullPage: true, mask: [page.locator('#totp-qr'), page.locator('#totp-secret'), page.locator('#reset-code')]}).catch(() => {});
+  await page.screenshot({path: join(reports, 'browser-failure.png'), fullPage: true, animations: 'disabled', mask: [page.locator('#totp-qr'), page.locator('#totp-secret'), page.locator('#reset-code')]}).catch(() => {});
   console.error('BROWSER FAILURE', error.message, 'PAGE ERRORS', errors);
   throw error;
 } finally {
