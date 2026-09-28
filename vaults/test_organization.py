@@ -49,7 +49,10 @@ class OrganizationTests(TestCase):
         self.user.refresh_from_db(); self.assertEqual(self.user.used_bytes, used)
         self.assertEqual(self.change(folder, {'trashed': False}).status_code, 200)
         response = self.client.get(f'/api/cypher/files/{file}/download/')
-        self.assertEqual(response.status_code, 200); response.close()
+        self.assertEqual(response.status_code, 200)
+        # Exhaust the test client's streaming wrapper, which closes the file
+        # without closing the surrounding TestCase PostgreSQL transaction.
+        self.assertEqual(b''.join(response.streaming_content), b'opaque ciphertext' * 2)
         self.change(folder, {'starred': True})
         self.assertTrue(CipherFolder.objects.get(pk=folder).starred)
         self.change(folder, {'trashed': True})
