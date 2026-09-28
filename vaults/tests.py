@@ -120,7 +120,7 @@ class VaultAPITests(TestCase):
             response = self.upload(data=data)
         self.assertEqual(response.status_code, 201)
         descriptor = response.json()["file"]
-        self.assertEqual(set(descriptor), {"id", "vault_id", "metadata", "ciphertext_bytes", "created_at"})
+        self.assertEqual(set(descriptor), {"id", "vault_id", "metadata", "ciphertext_bytes", "created_at", "parent_id", "starred", "trashed_at"})
         item = CipherFile.objects.get()
         self.assertEqual(item.ciphertext_bytes, len(data))
         self.assertNotIn("never-use", item.storage_key)

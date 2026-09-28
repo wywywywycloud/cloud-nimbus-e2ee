@@ -3,6 +3,7 @@ import os
 import selectors
 import subprocess
 import time
+import threading
 from pathlib import Path
 
 from django.conf import settings
@@ -25,6 +26,29 @@ def _run_bridge(command, encoded, environment):
     output = bytearray()
     pending = memoryview(encoded)
     try:
+        if os.name == "nt":
+            # Windows selectors cannot watch anonymous subprocess pipes.
+            # Bound the reader before allocation and retain the same deadline.
+            failures = []
+            def exchange():
+                try:
+                    process.stdin.write(encoded)
+                    process.stdin.close()
+                    output.extend(process.stdout.read(32769))
+                except OSError as exc:
+                    failures.append(exc)
+            worker = threading.Thread(target=exchange, daemon=True)
+            worker.start()
+            worker.join(timeout=15)
+            if worker.is_alive():
+                process.kill()
+                worker.join(timeout=2)
+                raise OpaqueUnavailable("OPAQUE runtime unavailable")
+            if failures:
+                raise OpaqueUnavailable("OPAQUE runtime unavailable")
+            if len(output) > 32768:
+                raise OpaqueError("Invalid protocol response")
+            return process.wait(timeout=max(0.01, deadline - time.monotonic())), bytes(output)
         os.set_blocking(process.stdin.fileno(), False)
         os.set_blocking(process.stdout.fileno(), False)
         with selectors.DefaultSelector() as selector:
@@ -68,6 +92,8 @@ def call_opaque(action, **params):
     if len(encoded) > 32768:
         raise OpaqueError("Invalid protocol input")
     environment = {"PATH": os.environ.get("PATH", ""), "OPAQUE_SERVER_SETUP": settings.OPAQUE_SERVER_SETUP}
+    if os.name == "nt" and "SystemRoot" in os.environ:
+        environment["SystemRoot"] = os.environ["SystemRoot"]
     if settings.OPAQUE_MODULE_PATH:
         environment["OPAQUE_MODULE_PATH"] = str(settings.OPAQUE_MODULE_PATH)
     try:

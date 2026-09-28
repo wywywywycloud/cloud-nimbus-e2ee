@@ -182,3 +182,66 @@ def login_finish(request):
         request.session["opaque_recent_auth"] = {"user_id": user.pk, "credential_version": credential.version, "authenticated_at": timezone.now().timestamp()}
     audit(request, "opaque.login_with_otp", actor=user, mode=challenge.method)
     return JsonResponse({"username": user.username})
+
+
+@endpoint
+@sensitive_variables()
+def rotate_start(request):
+    from accounts.onboarding import full_access
+    payload = _body(request, {"code"})
+    if not _enrollable(request.user) or not full_access(request):
+        return _error()
+    if not rate(request, "rotate", request.user.pk, limit=5):
+        return _error("rate_limited", 429)
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(pk=request.user.pk)
+        totp = TotpCredential.objects.select_for_update().filter(user=user).first()
+        if not _enrollable(user) or totp is None:
+            return _error()
+        # A freshly verified passkey can replace a lost authenticator.
+        marker = request.session.get("passkey_recent_auth", {})
+        passkey = isinstance(marker, dict) and marker.get("user_id") == user.pk and _recent(request, user) and type(marker.get("authenticated_at")) in (int, float) and 0 <= timezone.now().timestamp() - marker["authenticated_at"] < 300
+        code = payload["code"]
+        if not isinstance(code, str) or (code and not re.fullmatch(r"[0-9]{6}", code)):
+            return _error()
+        counter = matching_counter(totp.secret, code, after=totp.last_counter) if code else None
+        if counter is None and not (not code and passkey):
+            return _error()
+        if counter is not None:
+            totp.last_counter = counter
+            totp.save(update_fields=["last_counter"])
+        OtpChallenge.objects.filter(user=user, kind="rotate", consumed_at__isnull=True).update(consumed_at=timezone.now(), payload={})
+        secret = pyotp.random_base32()
+        challenge = OtpChallenge.objects.create(user=user, kind="rotate", method="totp", session_digest=session_digest(request, create=True), payload={"secret": secret, "totp_id": totp.pk, "auth_hash": user.get_session_auth_hash()}, expires_at=timezone.now() + timedelta(minutes=5))
+    return JsonResponse({"challenge": str(challenge.pk), "secret": secret})
+
+
+@endpoint
+@sensitive_variables()
+def rotate_finish(request):
+    from accounts.onboarding import full_access
+    from django.contrib.auth import update_session_auth_hash
+    identifier, code = _parse_proof(request)
+    if not _enrollable(request.user) or not full_access(request):
+        return _error()
+    with transaction.atomic():
+        user = User.objects.select_for_update().get(pk=request.user.pk)
+        challenge = OtpChallenge.objects.select_for_update().filter(pk=identifier, user=user, kind="rotate").first()
+        totp = TotpCredential.objects.select_for_update().filter(user=user).first()
+        if not _enrollable(user) or not _usable(challenge, session_digest(request)) or totp is None or challenge.payload.get("totp_id") != totp.pk or not hmac.compare_digest(challenge.payload.get("auth_hash", ""), user.get_session_auth_hash()):
+            return _error()
+        secret = challenge.payload["secret"]
+        counter = matching_counter(secret, code)
+        _attempt(challenge, counter is not None)
+        if counter is None:
+            return _error()
+        totp.delete()
+        TotpCredential.objects.create(user=user, secret=secret, last_counter=counter)
+        OtpChallenge.objects.filter(user=user, consumed_at__isnull=True).update(consumed_at=timezone.now(), payload={})
+        # OPAQUE record and vault wrappers stay intact. Rotate Django auth hash
+        # to revoke other browser sessions and outstanding authentication proofs.
+        user.set_unusable_password()
+        user.save(update_fields=["password"])
+        update_session_auth_hash(request, user)
+    audit(request, "otp.totp_rotated", actor=user)
+    return JsonResponse({"ok": True})

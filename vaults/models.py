@@ -22,12 +22,25 @@ class Vault(models.Model):
         ]
 
 
+class CipherFolder(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name="folders")
+    parent = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="children")
+    metadata = models.JSONField()
+    starred = models.BooleanField(default=False)
+    trashed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class CipherFile(models.Model):
     """Only ciphertext and opaque identifiers: no plaintext name, type, or key."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name="files")
     metadata = models.JSONField()
+    parent = models.ForeignKey(CipherFolder, null=True, blank=True, on_delete=models.SET_NULL, related_name="files")
+    starred = models.BooleanField(default=False)
+    trashed_at = models.DateTimeField(null=True, blank=True)
     ciphertext_bytes = models.PositiveBigIntegerField()
     storage_key = models.CharField(max_length=255, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)

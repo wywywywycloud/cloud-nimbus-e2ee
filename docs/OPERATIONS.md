@@ -134,3 +134,13 @@ Bot API, одноразовые deep links, request_contact и сравнени�
 ## 2026-09-27: публичный поддомен на 9443
 
 Для нового публичного адреса задаются DJANGO_ALLOWED_HOSTS=cloud.nimbus.by и PASSKEY_ORIGIN=https://cloud.nimbus.by:9443. PASSKEY_RP_ID=nimbus.by и существующие секреты сохраняются. DNS, сертификат обоих имён, Nginx и обратимый переход описаны в [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## 2026-09-28: релиз организации файлов
+
+Для новой версии нужна миграция `vaults.0002`; существующие ciphertext и ключи не
+переписываются. Перед релизом штатный nimbus-release берёт согласованный backup.
+Не откатывать БД автоматически: это может вернуть отозванные права. Корзина не имеет
+автоочистки; освобождение квоты происходит при явном purge. Имена папок и TOTP seeds
+не включать в логи/отчёты. Browser suite использует только disposable synthetic данные.
+Windows GUI запускается с PLAYWRIGHT_CHANNEL=msedge; полный Linux CI по-прежнему нужен
+для Unix permissions/symlink checks. Новые UI-сценарии — scripts/browser_organization.mjs.
